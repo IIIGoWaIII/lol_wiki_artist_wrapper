@@ -31,11 +31,15 @@ The server also binds 0.0.0.0, so LAN devices can use `http://<your-ip>:8000`, a
 
 ## Regenerate data
 
-Skins data is generated from the wiki's `Module:SkinData/data` Lua table (single request). Filenames are derived from skin keys and verified against the wiki API.
+Skins data is generated from the wiki's `Module:SkinData/data` Lua table, the image index (`allimages`), and each skin file's full revision history. Distinct repaints of a skin are detected by perceptual hash (dHash): small iterations of the same artwork are collapsed, so the **other versions** panel shows one copy per real repaint, oldest first, each upgraded to its best available resolution.
+
+Requires Python with Pillow:
 
 ```powershell
-python build_data.py        # rewrites data/skins.json
+python build_data.py        # rewrites data/skins.json (can take a while)
 ```
+
+Optional per-skin override in `data/artwork_overrides.json` (keyed by canonical file base, e.g. `"Xin_Zhao_OriginalSkin"`) forces which revisions to keep by date — either a plain list or `{"keep": [...]}`.
 
 ## Layout
 

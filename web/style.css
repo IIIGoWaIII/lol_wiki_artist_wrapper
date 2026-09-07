@@ -103,8 +103,15 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   font-size: 13px;
   display: flex;
   gap: 6px;
-  align-items: baseline;
+  align-items: center;
 }
+.fpanel summary::before {
+  content: "▸";
+  font-size: 11px;
+  transition: transform .15s ease;
+  flex-shrink: 0;
+}
+.fpanel[open] summary::before { transform: rotate(90deg); }
 .fpanel summary::-webkit-details-marker { display: none; }
 .fpanel summary:focus-visible { outline: 1px solid var(--cyan); outline-offset: -1px; }
 .fpanel[open] summary { border-bottom: 1px solid var(--line); }
@@ -379,6 +386,7 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
 }
 .vbtn img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
 .vbtn span { display: block; padding: 4px 6px; font-size: 11px; color: var(--text); }
+.vbtn i { display: block; padding: 0 6px 5px; font-size: 10px; font-style: normal; color: var(--dim); }
 .vbtn:hover { border-color: var(--cyan); }
 .vbtn.on { border-color: var(--gold2); box-shadow: 0 0 0 1px var(--gold2); }
 

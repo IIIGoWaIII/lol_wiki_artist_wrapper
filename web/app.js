@@ -36,6 +36,7 @@
     rec._i = i;
     rec._label = skinLabel(rec);
     rec._year = yearOf(rec);
+    rec._date = rec.d || rec.r || null;
     rec._search = [rec.ch, rec.s, rec.fmt, rec._label, set.join(" "), (rec.art || []).join(" ")]
       .filter(Boolean).join(" ").toLowerCase();
     return rec;
@@ -200,11 +201,15 @@
       return true;
     });
 
+    const cmpDate = (a, b) => {
+      if (a === b) return 0;
+      if (a == null) return 1;
+      if (b == null) return -1;
+      return a < b ? -1 : 1;
+    };
     const byDate = (rev) => (a, b) => {
-      const da = a._year ?? (rev ? Infinity : -Infinity);
-      const db = b._year ?? (rev ? Infinity : -Infinity);
-      if (da !== db) return rev ? da - db : db - da;
-      return a._label.localeCompare(b._label);
+      const c = rev ? cmpDate(a._date, b._date) : cmpDate(b._date, a._date);
+      return c || a._label.localeCompare(b._label);
     };
     switch (sort) {
       case "old": list.sort(byDate(true)); break;
@@ -315,6 +320,7 @@
     const rows = [
       ["Themes", (rec.set || []).join(", ")],
       ["Artists", (rec.art || []).join(", ")],
+      ["Artwork date", rec.d],
       ["Release date", rec.r],
       ["Chromas", rec.cr > 0 ? `${rec.cr} chromas` : "None"],
       ["Resolution", resText(rec) ? `${resText(rec)} px` : ""],
@@ -340,7 +346,7 @@
   function renderVersions(rec) {
     const box = $("lbVersGrid");
     box.innerHTML = "";
-    const vers = [{ l: "Newest", img: rec.img, t: rec.t, w: rec.w, h: rec.h }, ...(rec.v || [])];
+    const vers = versions(rec);
     $("lbVers").hidden = vers.length <= 1;
     if (vers.length <= 1) return;
     vers.forEach((v, i) => {
@@ -354,15 +360,19 @@
       im.alt = v.l;
       const sp = document.createElement("span");
       sp.textContent = v.l;
-      b.append(im, sp);
+      const d = document.createElement("i");
+      d.textContent = v.d || "";
+      b.append(im, sp, d);
       b.addEventListener("click", () => setVersion(rec, i, b));
       box.appendChild(b);
     });
   }
 
+  const versions = (rec) =>
+    [{ l: "Newest", d: rec.d, img: rec.img, t: rec.t, w: rec.w, h: rec.h }, ...(rec.v || [])];
+
   function setVersion(rec, i, el) {
-    const vers = [{ l: "Newest", img: rec.img, t: rec.t, w: rec.w, h: rec.h }, ...(rec.v || [])];
-    const v = vers[i];
+    const v = versions(rec)[i];
     if (!v) return;
     rec._curVer = i;
     loadLbImage(v);
