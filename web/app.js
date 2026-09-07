@@ -36,7 +36,8 @@
     rec._i = i;
     rec._label = skinLabel(rec);
     rec._year = yearOf(rec);
-    rec._date = rec.d || rec.r || null;
+    const rOk = rec.r && /^\d{4}-\d{2}-\d{2}$/.test(rec.r);
+    rec._date = (rOk ? rec.r : null) || rec.d || null;
     rec._search = [rec.ch, rec.s, rec.fmt, rec._label, set.join(" "), (rec.art || []).join(" ")]
       .filter(Boolean).join(" ").toLowerCase();
     return rec;
@@ -428,6 +429,22 @@
     renderPanels();
     apply();
   });
+
+  const sb = $("sidebar");
+  const sbToggle = $("sbToggle");
+  const sbOverlay = $("sbOverlay");
+  function setSb(open) {
+    sb.classList.toggle("open", open);
+    document.body.classList.toggle("sbdim", open);
+    sbOverlay.hidden = !open;
+    sbToggle.setAttribute("aria-expanded", String(open));
+  }
+  sbToggle.addEventListener("click", () => setSb(!sb.classList.contains("open")));
+  sbOverlay.addEventListener("click", () => setSb(false));
+  sbToggle.setAttribute("aria-expanded", "false");
+  const onResize = () => { if (window.innerWidth > 980) setSb(false); };
+  window.addEventListener("resize", onResize);
+  onResize();
 
   let debounce = null;
   $("fYear").addEventListener("change", apply);
