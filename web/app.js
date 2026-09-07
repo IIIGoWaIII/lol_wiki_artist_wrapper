@@ -280,6 +280,29 @@
     return card;
   }
 
+  function loadLbImage(rec) {
+    const img = $("lbImg");
+    const bar = $("lbLoadBar");
+    bar.classList.remove("done");
+
+    img.onload = null;
+    img.onerror = null;
+
+    const full = document.createElement("img");
+    full.src = rec.img;
+    full.onload = () => {
+      bar.classList.add("done");
+      setTimeout(() => bar.classList.remove("active", "done"), 2000);
+      img.src = full.src;
+      img.classList.remove("lb-loading");
+    };
+    full.onerror = () => bar.classList.remove("active");
+
+    img.src = rec.t || rec.img;
+    img.classList.add("lb-loading");
+    bar.classList.add("active");
+  }
+
   function openLightbox(idx) {
     state.lbIdx = idx;
     const rec = state.filtered[idx];
@@ -306,9 +329,7 @@
       info.append(dt, dd);
     }
 
-    const img = $("lbImg");
-    img.src = rec.img;
-    img.alt = `${label} — ${rec.ch}`;
+    loadLbImage(rec);
     $("lbImgWrap").scrollTop = 0;
     $("lbStage").scrollTop = 0;
 
@@ -346,9 +367,7 @@
     const v = vers[i];
     if (!v) return;
     rec._curVer = i;
-    const img = $("lbImg");
-    img.src = v.img;
-    img.alt = `${v.l} — ${rec.ch}`;
+    loadLbImage(v);
     $("lbImgWrap").scrollTop = 0;
     $("lbStage").scrollTop = 0;
     const res = $("lbRes");

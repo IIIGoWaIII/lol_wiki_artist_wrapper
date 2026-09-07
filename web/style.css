@@ -294,6 +294,52 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   max-width: 100%;
   max-height: 100%;
   overflow: auto;
+  position: relative;
+}
+#lbImgWrap img {
+  transition: filter 0.3s;
+}
+#lbImgWrap img.lb-loading {
+  filter: blur(6px);
+}
+#lbLoadBar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgba(10, 200, 185, 0.15);
+  border-radius: 0 0 3px 3px;
+  z-index: 10;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+#lbLoadBar.active {
+  opacity: 1;
+}
+#lbLoadBarFill {
+  height: 100%;
+  width: 0%;
+  background: var(--cyan);
+  border-radius: 0 3px 3px 0;
+  transition: width 0.4s ease;
+}
+#lbLoadBar.active #lbLoadBarFill {
+  width: 70%;
+  animation: lbLoadPulse 1.5s ease-in-out infinite;
+}
+#lbLoadBar.done {
+  opacity: 1;
+}
+#lbLoadBar.done #lbLoadBarFill {
+  width: 100%;
+  transition: width 0.2s ease;
+}
+@keyframes lbLoadPulse {
+  0% { width: 10%; }
+  50% { width: 75%; }
+  100% { width: 10%; }
 }
 #lbImg {
   max-width: 100%;
