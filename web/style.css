@@ -299,9 +299,6 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
 #lbImgWrap img {
   transition: filter 0.3s;
 }
-#lbImgWrap img.lb-loading {
-  filter: blur(6px);
-}
 #lbLoadBar {
   position: absolute;
   top: 14px;

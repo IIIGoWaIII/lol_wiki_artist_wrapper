@@ -294,12 +294,10 @@
       bar.classList.add("done");
       setTimeout(() => bar.classList.remove("active", "done"), 2000);
       img.src = full.src;
-      img.classList.remove("lb-loading");
     };
     full.onerror = () => bar.classList.remove("active");
 
     img.src = rec.t || rec.img;
-    img.classList.add("lb-loading");
     bar.classList.add("active");
   }
 
