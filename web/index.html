@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LoL Splash Reference</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="layout">
+  <aside id="sidebar">
+    <section id="filters">
+      <details class="fpanel" id="fpChamp" open>
+        <summary>Champions<span class="sc" id="scChamps"></span></summary>
+        <div class="pctl">
+          <input class="psearch" id="psChamps" placeholder="Search champion name..." type="search">
+          <button class="pall" data-kind="champs">Select all</button>
+          <button class="pnone" data-kind="champs">Clear</button>
+        </div>
+        <div class="pgrid" id="pgChamps"></div>
+      </details>
+
+      <details class="fpanel" id="fpTheme">
+        <summary>Themes<span class="sc" id="scThemes"></span></summary>
+        <div class="pctl">
+          <input class="psearch" id="psThemes" placeholder="Search theme name..." type="search">
+          <button class="pall" data-kind="themes">Select all</button>
+          <button class="pnone" data-kind="themes">Clear</button>
+        </div>
+        <div class="pgrid" id="pgThemes"></div>
+      </details>
+
+      <details class="fpanel" id="fpArtist">
+        <summary>Artists<span class="sc" id="scArtists"></span></summary>
+        <div class="pctl">
+          <input class="psearch" id="psArtists" placeholder="Search artist name..." type="search">
+          <button class="pall" data-kind="artists">Select all</button>
+          <button class="pnone" data-kind="artists">Clear</button>
+        </div>
+        <div class="pgrid pills" id="pgArtists"></div>
+      </details>
+
+      <div class="selrow">
+        <select id="fYear" title="Release year"><option value="">Any year</option></select>
+        <select id="fSort" title="Sort">
+          <option value="new">Newest first</option>
+          <option value="old">Oldest first</option>
+          <option value="az">Champion A&rarr;Z</option>
+          <option value="za">Champion Z&rarr;A</option>
+        </select>
+      </div>
+      <button id="clearbtn" title="Clear filters">Clear</button>
+    </section>
+  </aside>
+
+  <div class="content">
+    <main id="grid"></main>
+
+    <div id="empty" hidden>
+      <p>No skins match your filters.</p>
+    </div>
+    <button id="more" hidden>Show more</button>
+  </div>
+</div>
+
+<div id="lb" hidden role="dialog" aria-modal="true" aria-label="Skin detail">
+  <div id="lbStage">
+    <button id="lbClose" title="Close (Esc)">&times;</button>
+    <button id="lbPrev" title="Previous (&larr;)">&#8249;</button>
+    <div id="lbImgWrap"><img id="lbImg" alt="Splash art"></div>
+    <button id="lbNext" title="Next (&rarr;)">&#8250;</button>
+  </div>
+  <aside id="lbMeta">
+    <h2 id="lbName"></h2>
+    <div id="lbChamp"></div>
+    <div id="lbPos"></div>
+    <dl id="lbInfo"></dl>
+    <div id="lbVers" hidden>
+      <h3>Other versions</h3>
+      <div id="lbVersGrid"></div>
+    </div>
+  </aside>
+</div>
+
+<div id="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
