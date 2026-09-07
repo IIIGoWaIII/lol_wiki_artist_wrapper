@@ -41,6 +41,10 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   align-items: flex-start;
 }
 
+#sbToggle {
+  display: none;
+}
+
 #sidebar {
   position: sticky;
   top: 0;
@@ -209,6 +213,19 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 16px;
   padding: 22px;
+}
+
+@media (max-width: 720px) {
+  #grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+    padding: 12px;
+  }
+  .card .meta { padding: 6px 8px; }
+  .card .name { font-size: 12px; }
+  .card .sub { font-size: 10px; }
+  .card .code { top: 4px; left: 4px; }
+  .card .res { left: 4px; bottom: 4px; }
 }
 
 .card {
@@ -409,7 +426,78 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
 #toast.show { opacity: 1; }
 
 @media (max-width: 900px) {
-  #lb { flex-direction: column-reverse; }
-  #lbMeta { width: 100%; max-height: 42vh; border-left: none; border-top: 1px solid var(--line); }
+  #lb { flex-direction: column; }
+  #lbMeta { width: 100%; max-height: 38vh; border-left: none; border-top: 1px solid var(--line); }
   #lbStage { padding: 60px 12px 12px; }
+  #lbClose, #lbPrev, #lbNext { width: 40px; height: 40px; }
+  #lbClose { top: 10px; right: 10px; }
+  #lbPrev { left: 8px; }
+  #lbNext { right: 8px; }
+}
+
+@media (max-width: 640px) {
+  #lbStage { padding: 56px 10px 10px; }
+  #lbClose, #lbPrev, #lbNext { width: 36px; height: 36px; font-size: 20px; }
+  #lbClose { font-size: 24px; }
+  #lbMeta { max-height: 34vh; padding: 18px 14px; }
+  #lbName { font-size: 16px; }
+  #lbVersGrid { grid-template-columns: 1fr 1fr; gap: 6px; }
+}
+
+#sbOverlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(1, 8, 14, 0.55);
+}
+
+@media (max-width: 980px) {
+  #sbToggle {
+    display: grid;
+    place-items: center;
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 80;
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    font-size: 22px;
+    line-height: 1;
+    background: rgba(6, 22, 32, 0.9);
+  }
+  .layout { display: block; }
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 92;
+    width: min(440px, 86vw);
+    height: 100vh;
+    border-left: none;
+    border-right: 1px solid var(--line);
+    box-shadow: 10px 0 40px rgba(0, 0, 0, 0.6);
+    transform: translateX(-100%);
+    transition: transform 0.28s ease;
+    padding-top: 64px;
+  }
+  #sidebar.open {
+    transform: translateX(0);
+  }
+  body.sbdim #sbOverlay { display: block; }
+  #filters { padding-top: 0; }
+  #grid { padding-left: 74px; }
+}
+
+@media (max-width: 520px) {
+  #filters select { font-size: 12px; }
+  #grid { padding: 64px 10px 12px; }
+  #sbToggle { top: 8px; left: 8px; }
+  .selrow { flex-direction: column; }
+  .pctl { flex-wrap: wrap; }
+  .pctl .psearch { min-width: 100%; }
+  .pgrid { grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 6px; padding: 8px; }
+  #pgThemes .pgrid, .pgrid.pills { grid-template-columns: 1fr; }
 }
