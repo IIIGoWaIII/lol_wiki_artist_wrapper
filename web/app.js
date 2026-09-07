@@ -42,7 +42,7 @@
   }
 
   async function load() {
-    const d = await (await fetch("/data/skins.json")).json();
+    const d = await (await fetch("data/skins.json")).json();
     state.skins = d.skins.map(precompute);
     buildIndex();
     buildSelects();
@@ -265,12 +265,6 @@
     imgWrap.appendChild(img);
     card.appendChild(imgWrap);
 
-    const copy = document.createElement("button");
-    copy.className = "copybtn";
-    copy.title = "Copy image to clipboard";
-    copy.textContent = "Copy";
-    card.appendChild(copy);
-
     const meta = document.createElement("div");
     meta.className = "meta";
     const name = document.createElement("div");
@@ -283,7 +277,6 @@
     card.appendChild(meta);
 
     card.addEventListener("click", () => openLightbox(idx));
-    copy.addEventListener("click", (e) => { e.stopPropagation(); copyImage(state.filtered[idx]); });
     return card;
   }
 
@@ -373,33 +366,6 @@
   function step(delta) {
     const nxt = (state.lbIdx + delta + state.filtered.length) % state.filtered.length;
     openLightbox(nxt);
-  }
-
-  async function copyImage(rec) {
-    if (!rec.img) { copyUrl(rec); return; }
-    try {
-      const resp = await fetch("/proxy?u=" + encodeURIComponent(rec.img));
-      if (!resp.ok) throw new Error("proxy " + resp.status);
-      const blob = await resp.blob();
-      const type = blob.type.startsWith("image/") ? blob.type : "image/jpeg";
-      if (!navigator.clipboard || !window.ClipboardItem) throw new Error("unavailable");
-      await navigator.clipboard.write([new ClipboardItem({ [type]: blob })]);
-      toast("Image copied to clipboard — paste into PureRef");
-    } catch (e) {
-      try {
-        await navigator.clipboard.writeText(rec.img);
-        toast("Image clipboard blocked here — copied image URL instead");
-      } catch (e2) {
-        toast("Open this page via localhost to copy images, or drag the image into PureRef");
-      }
-    }
-  }
-
-  async function copyUrl(rec) {
-    try {
-      await navigator.clipboard.writeText(rec.img || `${rec.ch} ${rec._label}`);
-      toast("URL copied");
-    } catch (e) { toast("Clipboard unavailable on this connection"); }
   }
 
   let toastTimer = null;

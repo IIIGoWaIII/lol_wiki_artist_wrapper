@@ -269,20 +269,6 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   border: 1px solid var(--line);
   letter-spacing: 0.3px;
 }
-.card .copybtn {
-  position: absolute;
-  top: 6px; right: 6px;
-  padding: 6px 10px;
-  background: rgba(1, 10, 19, 0.82);
-  border: 1px solid var(--line);
-  color: var(--gold2);
-  font-size: 13px;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-.card:hover .copybtn { opacity: 1; }
-.card .copybtn:hover { border-color: var(--gold); background: rgba(20, 46, 61, 0.9); }
-
 #more, #empty {
   display: block;
   margin: 6px auto 40px;

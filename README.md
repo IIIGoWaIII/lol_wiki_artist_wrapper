@@ -13,9 +13,14 @@ Local reference-gallery wrapper for the [League of Legends Wiki](https://wiki.le
 - Sort by release date, champion or price.
 - High-definition splashes (up to 6000x3500+) with resolution shown on every card and in the detail view.
 - **Other versions** listed in the side panel for reworked/older splashes (e.g. pre-rework `_old`/`_Unused` art) — click one to load it into the main view.
-- **Copy image** to clipboard for instant paste into PureRef (served through a local CORS proxy since the wiki blocks cross-origin reads).
 
 ## Run
+
+Public copy hosted on GitHub Pages (auto-deployed from `main`):
+
+- https://IIIGoWaIII.github.io/lol_wiki_artist_wrapper/
+
+Run locally:
 
 ```powershell
 python server.py            # http://localhost:8000
@@ -36,14 +41,14 @@ python build_data.py        # rewrites data/skins.json
 
 ```
 build_data.py   fetch + parse + verify -> data/skins.json
-server.py       static server + CORS image proxy /proxy?u=<url>
+server.py       static server (local browsing)
 web/            index.html, style.css, app.js (no build step, vanilla JS)
 data/skins.json generated catalog (2130 skins, 225 themes)
+.github/        GitHub Actions workflow that deploys web/ + data/ to Pages
 ```
 
 ## Notes
 
 - Splash file resolution: `Champion_<Skin>Skin.jpg` with spaces/colons/slashes stripped but other punctuation kept (e.g. `Kog'Maw Bee'MawSkin.jpg`, `Gragas Gragas,Esq.Skin.jpg`). The `_HD` variant (e.g. `Tahm_Kench_OriginalSkin_HD.jpg`) is preferred when the wiki has one.
 - Variant/prestige skins reuse their base skin's art.
-- Clipboard image copy requires a secure context; use `http://localhost` or the Tailscale hostname.
 - Images are hot-linked from the wiki; HD originals are up to 6000px+ wide, grid thumbs are 1200px HD.

@@ -1,31 +1,22 @@
 #!/usr/bin/env python3
 """
-LoL wiki reference wrapper - local server.
+LoL wiki reference wrapper - local static server.
 
-Serves the static web app and proxies wiki images with CORS headers added so
-the browser can pull blobs and place them on the clipboard (for PureRef).
+Serves the static web app for local browsing (GitHub Pages hosts the same
+app publicly).
 
 Usage: python server.py [--port 8000] [--host 0.0.0.0]
 """
 
 import argparse
 import socket
-import threading
 import urllib.parse
-import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
 DATA_FILE = ROOT / "data" / "skins.json"
-USER_AGENT = "lol-wiki-reference-wrapper/1.0 (local artist tool)"
-
-ALLOWED_IMAGE_HOST = "wiki.leagueoflegends.com"
-
-# (url) -> bytes cache, small bounded LRU-style dict
-_IMG_CACHE = {}
-_IMG_CACHE_MAX = 120
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -34,9 +25,6 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == "/proxy":
-            self._proxy(urllib.parse.parse_qs(parsed.query).get("u", [None])[0])
-            return
         if parsed.path.startswith("/data/"):
             self._static(DATA_FILE)
             return
@@ -44,9 +32,6 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == "/proxy":
-            self._proxy(urllib.parse.parse_qs(parsed.query).get("u", [None])[0], head=True)
-            return
         self._static(WEB_DIR / parsed.path.lstrip("/"), head=True)
 
     # ------------------------------------------------------------------
@@ -89,38 +74,6 @@ class Handler(BaseHTTPRequestHandler):
         self._send_headers(200, ct, len(data))
         if not head:
             self.wfile.write(data)
-
-    # ------------------------------------------------------------------
-    def _proxy(self, url, head=False):
-        if not url or not url.startswith(("https://wiki.leagueoflegends.com/", "http://wiki.leagueoflegends.com/")):
-            self._send_headers(400, "text/plain")
-            if not head:
-                self.wfile.write(b"bad url")
-            return
-        cached = _IMG_CACHE.get(url)
-        if cached:
-            ctype, body = cached
-            self._send_headers(200, ctype, len(body))
-            if not head:
-                self.wfile.write(body)
-            return
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                ctype = resp.headers.get("Content-Type", "application/octet-stream")
-                body = resp.read()
-        except Exception as e:  # noqa: BLE001
-            self._send_headers(502, "text/plain")
-            if not head:
-                self.wfile.write(str(e).encode("utf-8", "replace"))
-            return
-        if not head and len(body) < 4 * 1024 * 1024:
-            if len(_IMG_CACHE) >= _IMG_CACHE_MAX:
-                _IMG_CACHE.clear()
-            _IMG_CACHE[url] = (ctype, body)
-        self._send_headers(200, ctype, len(body))
-        if not head:
-            self.wfile.write(body)
 
     # ------------------------------------------------------------------
     def log_message(self, fmt, *args):
