@@ -33,7 +33,7 @@ OVERRIDES_PATH = "data/artwork_overrides.json"
 # CLUSTER_THRESHOLD: revisions within this distance count as the same artwork.
 # A sibling file (_oldN/_Unused/_HD) within the same distance of an artwork is
 # treated as that art, so the highest-resolution copy can be picked.
-CLUSTER_THRESHOLD = 7
+CLUSTER_THRESHOLD = 13
 MATCH_THRESHOLD = 7
 HASH_THUMB_WIDTH = 120
 
@@ -260,11 +260,12 @@ def _file_rec(im: dict) -> dict:
         "w": im.get("width"),
         "h": im.get("height"),
         "ts": im.get("timestamp", ""),
+        "sha1": im.get("sha1", ""),
     }
 
 
 def discover_prefix(prefix: str) -> dict:
-    """allimages prefix search -> {filename: rec} (url/w/h/ts)."""
+    """allimages prefix search -> {filename: rec} (url/w/h/ts/sha1)."""
     out = {}
     cont = None
     while True:
@@ -275,7 +276,7 @@ def discover_prefix(prefix: str) -> dict:
             "list": "allimages",
             "aiprefix": prefix,
             "ailimit": "500",
-            "aiprop": "timestamp|url|dimensions",
+            "aiprop": "timestamp|url|dimensions|sha1",
         }
         if cont:
             params.update(cont)
@@ -375,8 +376,121 @@ _OLD_RE = re.compile(r"^_old(\d*)(_HD)?$")
 _UNUSED_RE = re.compile(r"^_Unused(\d*)(_HD)?$")
 _SKIP_MARK = ("_Ch", "_WR", "_TFT", "_Mobile", "_Chr")  # other-game / non-splash files
 
+# Art-creation dates for sibling files (_old/_Unused) are looked up lazily;
+# see _enqueue_siblings / _flush_sibling_histories.
+SIB_HIST = {}
+_SIB_QUEUE = []
+_SIB_SEEN = set()
+_SIB_FN_RE = re.compile(r"_(?:old\d*|Unused\d*)(?:_HD)?\.jpg$")
 
-def classify_siblings(files: dict, base: str) -> tuple[list, list]:
+
+def _sib_needs_date(fn: str) -> bool:
+    return bool(_SIB_FN_RE.search(fn))
+
+
+def _enqueue_siblings(files: dict):
+    for fn in files:
+        if fn in _SIB_SEEN or not _sib_needs_date(fn):
+            continue
+        _SIB_SEEN.add(fn)
+        _SIB_QUEUE.append(fn)
+        if len(_SIB_QUEUE) >= 45:
+            _flush_sibling_histories()
+
+
+def _flush_sibling_histories():
+    if not _SIB_QUEUE:
+        return
+    chunk = _SIB_QUEUE[:45]
+    del _SIB_QUEUE[:45]
+    SIB_HIST.update(fetch_histories(chunk))
+
+
+def art_date(fn: str, rec: dict, histories: dict, canon_sha_dates: dict) -> str:
+    """Creation date of a sibling file's art.
+
+    Prefer a byte-identical match against the canonical file history (the file
+    may be a community copy of an earlier revision, re-uploaded later), then
+    fall back to the sibling's own earliest revision, then its latest upload.
+    """
+    sha = rec.get("sha1")
+    d = canon_sha_dates.get(sha)
+    if d:
+        return d
+    revs = histories.get(fn) or SIB_HIST.get(fn)
+    if revs:
+        dates = [r["ts"][:10] for r in revs if r.get("ts")]
+        if dates:
+            return min(dates)
+    return (rec.get("ts") or "")[:10]
+
+
+def recover_art_date(
+    base: str,
+    fn: str,
+    rec: dict,
+    histories: dict,
+    cache: dict,
+    rev_h: dict,
+) -> str | None:
+    """Art-creation date of a sibling that only appeared during a wiki migration
+    sweep.
+
+    Such files hold a re-encoded copy of the art that was current on the
+    canonical file right before the sweep, so their true date lives in the
+    canonical history, not in their own (post-migration) revisions. Match the
+    sibling against canonical revisions older than the sibling's creation and
+    take the oldest matching revision: same-art junk revisions repeat the
+    original bytes, so the birth of the art is the oldest revision whose
+    thumbnail matches within the repaint-noise threshold.
+    """
+    canon = histories.get(base + ".jpg")
+    if not canon or not rec.get("url"):
+        return None
+    sib = cache.get(rec["url"])
+    if sib is None:
+        sib = fetch_thumb_hash(rec["url"], cache)
+    if sib is None:
+        return None
+    creation = None
+    revs = histories.get(fn) or SIB_HIST.get(fn)
+    if revs:
+        dates = [r["ts"][:10] for r in revs if r.get("ts")]
+        if dates:
+            creation = min(dates)
+    if creation is None:
+        creation = (rec.get("ts") or "")[:10]
+    if not creation:
+        return None
+    if base not in rev_h:
+        hashes = []
+        for r in canon:
+            if not r.get("url"):
+                hashes.append(None)
+                continue
+            h = cache.get(r["url"])
+            if h is None:
+                h = fetch_thumb_hash(r["url"], cache)
+            hashes.append(h)
+        rev_h[base] = list(zip(canon, hashes))
+    oldest = None
+    for r, h in rev_h[base]:
+        if not r.get("ts") or r["ts"][:10] >= creation:
+            continue
+        ok = h is not None and bin(h ^ sib).count("1") <= CLUSTER_THRESHOLD
+        if ok:
+            oldest = r["ts"][:10]
+    return oldest
+
+
+def classify_siblings(
+    files: dict,
+    base: str,
+    histories: dict,
+    canon_sha_dates: dict,
+    cache: dict,
+    rev_h: dict,
+) -> tuple[list, list]:
     """Split sibling files into old-art and unused-art candidates.
 
     Returns (old_list, unused_list); each item is {url, w, h, d, n}.
@@ -394,27 +508,59 @@ def classify_siblings(files: dict, base: str) -> tuple[list, list]:
             continue
         m = _OLD_RE.match(rest)
         if m:
+            d = art_date(fn, rec, histories, canon_sha_dates)
+            rd = recover_art_date(base, fn, rec, histories, cache, rev_h)
+            if rd and (not d or rd < d):
+                d = rd
             olds.append(
                 {
+                    "fn": fn,
                     "url": rec["url"],
                     "w": rec["w"],
                     "h": rec["h"],
-                    "d": (rec["ts"] or "")[:10],
+                    "d": d,
                     "n": int(m.group(1) or 1),
                 }
             )
             continue
         m = _UNUSED_RE.match(rest)
         if m:
+            d = art_date(fn, rec, histories, canon_sha_dates)
+            rd = recover_art_date(base, fn, rec, histories, cache, rev_h)
+            if rd and (not d or rd < d):
+                d = rd
             unuseds.append(
                 {
+                    "fn": fn,
                     "url": rec["url"],
                     "w": rec["w"],
                     "h": rec["h"],
-                    "d": (rec["ts"] or "")[:10],
+                    "d": d,
                     "n": int(m.group(1) or 1),
                 }
             )
+
+    for lst in (olds, unuseds):
+        by_fn = {c["fn"]: c for c in lst}
+        for c in lst:
+            if not c["fn"].endswith("_HD.jpg") or not c.get("d"):
+                continue
+            partner = by_fn.get(c["fn"][:-7] + ".jpg")
+            if not partner or not partner.get("d") or partner["d"] >= c["d"]:
+                continue
+            h1 = cache.get(c["url"])
+            if h1 is None:
+                h1 = fetch_thumb_hash(c["url"], cache)
+            h2 = cache.get(partner["url"])
+            if h2 is None:
+                h2 = fetch_thumb_hash(partner["url"], cache)
+            if h1 and h2 and bin(h1 ^ h2).count("1") <= CLUSTER_THRESHOLD:
+                c["d"] = partner["d"]
+
+    for c in olds:
+        del c["fn"]
+    for c in unuseds:
+        del c["fn"]
     return olds, unuseds
 
 
@@ -496,6 +642,12 @@ def build_timeline(base: str, revs: list[dict], force: list[str] | None, cache: 
         return []
     clusters = cluster_history(arts, cache)
     keeps = [pick_keep(cl, i == 0) for i, cl in enumerate(clusters)]
+    # Backdate each artwork to when its family was first created: the oldest
+    # revision in the cluster, so repaints/re-uploads don't masquerade as new
+    # artworks. Image stays the newest revision; only the date moves.
+    for cl, k in zip(clusters, keeps):
+        k["d"] = cl[-1]["d"] or k["d"]
+        k["ts"] = cl[-1]["ts"] or k["ts"]
     dropped = [a for a in arts if all(a is not k for k in keeps)]
     if dropped or len(keeps) > 1:
         report.append(
@@ -545,6 +697,7 @@ def assemble(
     cache: dict,
     overrides: dict,
     report: list,
+    canon_sha_dates: dict,
 ) -> dict | None:
     """Assemble the artwork payload for one skin base. Returns None if nothing found."""
     force = None
@@ -569,14 +722,22 @@ def assemble(
     if hd and len(arts) == 1:
         arts[0]["url"], arts[0]["w"], arts[0]["h"] = hd["url"], hd["w"], hd["h"]
 
-    olds, unuseds = classify_siblings(files, base)
+    rev_h = {}
+    olds, unuseds = classify_siblings(files, base, histories, canon_sha_dates, cache, rev_h)
     cands = [dict(c, kind="old") for c in olds] + [dict(c, kind="unused") for c in unuseds]
-    if hd and "HD" not in arts[0]["url"]:
-        cands.append({"url": hd["url"], "w": hd["w"], "h": hd["h"], "d": hd["ts"][:10], "kind": "hd"})
 
     upgrade, extras = match_siblings(arts, cands, cache)
     for i, c in upgrade.items():
         arts[i]["url"], arts[i]["w"], arts[i]["h"] = c["url"], c["w"], c["h"]
+
+    # A bare _HD file is a high-resolution copy of the current art; always use
+    # it as the main image (never a separate version), regardless of how far its
+    # downscaled hash drifts from the base file.
+    if hd and "HD" not in arts[0]["url"]:
+        art_area = (arts[0].get("w") or 0) * (arts[0].get("h") or 0)
+        hd_area = (hd.get("w") or 0) * (hd.get("h") or 0)
+        if hd_area > art_area:
+            arts[0]["url"], arts[0]["w"], arts[0]["h"] = hd["url"], hd["w"], hd["h"]
 
     main = arts[0]
     versions = []
@@ -591,7 +752,6 @@ def assemble(
                 "h": a["h"],
             }
         )
-    extras.sort(key=lambda c: c["d"] or "", reverse=True)
     for c in extras:
         versions.append(
             {
@@ -603,6 +763,7 @@ def assemble(
                 "h": c["h"],
             }
         )
+    versions.sort(key=lambda v: v["d"] or "9999-99-99")
 
     return {
         "img": main["url"],
@@ -668,6 +829,14 @@ def main():
     print(f"skins: {len(skin_info)}; fetching file histories...")
     histories = fetch_histories(canonical_files)
 
+    canon_sha_dates = {}
+    for fn, revs in histories.items():
+        for r in revs:
+            sha = r.get("sha1")
+            ts = r.get("ts", "")[:10]
+            if sha and ts:
+                canon_sha_dates[sha] = min(canon_sha_dates.get(sha, ts), ts)
+
     print("discovering splash files via image index...")
     champ_cache = {}
     cache = {}  # thumb-hash cache {url: hash}
@@ -678,9 +847,16 @@ def main():
         if files is None:
             files = discover_prefix(key)
             champ_cache[key] = files
+            _enqueue_siblings(files)
+            _flush_sibling_histories()
+            histories.update(SIB_HIST)
         hits = {fn: r for fn, r in files.items() if fn == base + ".jpg" or fn.startswith(base + "_")}
         if not hits:
-            hits = discover_prefix(base)
+            files = discover_prefix(base)
+            _enqueue_siblings(files)
+            _flush_sibling_histories()
+            histories.update(SIB_HIST)
+            hits = {fn: r for fn, r in files.items() if fn == base + ".jpg" or fn.startswith(base + "_")}
         return hits
 
     def resolve(name, sk, info):
@@ -688,7 +864,7 @@ def main():
             files = files_for_base(name, base)
             if not files and base not in histories:
                 continue
-            payload = assemble(base, files, histories, cache, overrides, report)
+            payload = assemble(base, files, histories, cache, overrides, report, canon_sha_dates)
             if payload:
                 return payload
         v = info.get("variant")
@@ -738,6 +914,9 @@ def main():
             for s in st:
                 set_counts[s] = set_counts.get(s, 0) + 1
         skins.append(rec)
+
+    _flush_sibling_histories()
+    histories.update(SIB_HIST)
 
     sets = sorted(set_counts.items(), key=lambda kv: (-kv[1], kv[0]))
     meta = {

@@ -37,7 +37,7 @@
     rec._label = skinLabel(rec);
     rec._year = yearOf(rec);
     const rOk = rec.r && /^\d{4}-\d{2}-\d{2}$/.test(rec.r);
-    rec._date = (rOk ? rec.r : null) || rec.d || null;
+    rec._date = rec.d || (rOk ? rec.r : null) || null;
     rec._search = [rec.ch, rec.s, rec.fmt, rec._label, set.join(" "), (rec.art || []).join(" ")]
       .filter(Boolean).join(" ").toLowerCase();
     return rec;
