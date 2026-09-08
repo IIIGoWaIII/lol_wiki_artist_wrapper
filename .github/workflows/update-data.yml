@@ -1,0 +1,43 @@
+name: Refresh wiki skin data
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Pillow
+        run: pip install Pillow
+
+      - name: Build data/skins.json
+        run: python build_data.py
+
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet data/skins.json; then
+            echo "No changes to data/skins.json"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/skins.json
+          git commit -m "chore: refresh wiki skin data ($(date +%Y-%m-%d))"
+          git pull --rebase origin main
+          git push origin main
