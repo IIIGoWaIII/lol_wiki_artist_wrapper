@@ -19,6 +19,12 @@
   const lb = $("lb");
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
+  const lbLens = $("lbLens");
+  const lbLensImg = $("lbLensImg");
+  let magZoom = 1.5;
+  const MAG_SIZE = 600;
+  let lbDown = false;
+
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   const skinLabel = (rec) => {
@@ -300,6 +306,7 @@
       bar.classList.add("done");
       setTimeout(() => bar.classList.remove("active", "done"), 2000);
       img.src = full.src;
+      lbLensImg.src = full.src;
     };
     full.onerror = () => bar.classList.remove("active");
 
@@ -450,6 +457,52 @@
   $("fYear").addEventListener("change", apply);
   $("fSort").addEventListener("change", apply);
   more.addEventListener("click", renderStep);
+
+  const lbImg = $("lbImg");
+  function magUpdate(e) {
+    if (!lbDown) return;
+    const wrapEl = $("lbImgWrap");
+    const wrap = wrapEl.getBoundingClientRect();
+    const box = lbImg.getBoundingClientRect();
+    const mx = e.clientX - box.left;
+    const my = e.clientY - box.top;
+    if (mx < 0 || mx > box.width || my < 0 || my > box.height) {
+      lbDown = false;
+      lbLens.classList.remove("on");
+      return;
+    }
+    const offX = mx * magZoom;
+    const offY = my * magZoom;
+    lbLensImg.style.width = (box.width * magZoom) + "px";
+    lbLensImg.style.height = (box.height * magZoom) + "px";
+    lbLensImg.style.left = (MAG_SIZE / 2 - offX) + "px";
+    lbLensImg.style.top = (MAG_SIZE / 2 - offY) + "px";
+    lbLens.style.left = (e.clientX - wrap.left - MAG_SIZE / 2 + wrapEl.scrollLeft) + "px";
+    lbLens.style.top = (e.clientY - wrap.top - MAG_SIZE / 2 + wrapEl.scrollTop) + "px";
+  }
+  lbImg.addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || lb.hidden) return;
+    e.preventDefault();
+    lbDown = true;
+    lbLens.style.width = MAG_SIZE + "px";
+    lbLens.style.height = MAG_SIZE + "px";
+    lbLensImg.src = lbImg.src;
+    magUpdate(e);
+    lbLens.classList.add("on");
+  });
+  document.addEventListener("mousemove", magUpdate);
+  document.addEventListener("mouseup", () => {
+    lbDown = false;
+    lbLens.classList.remove("on");
+  });
+  document.addEventListener("wheel", (e) => {
+    if (lb.hidden || !lbDown) return;
+    const box = lbImg.getBoundingClientRect();
+    if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) return;
+    e.preventDefault();
+    magZoom = Math.max(1, magZoom + (e.deltaY > 0 ? -0.15 : 0.15));
+    magUpdate(e);
+  }, { passive: false });
 
   load().catch((e) => { toast("Failed to load data: " + e.message); });
 })();
