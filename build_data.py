@@ -813,15 +813,19 @@ def main():
 
     # champion -> base prefixes -> skin records
     skin_info = []  # (champ_name, skin_key, skin_dict, bases, entry_id)
-    lookup = {}  # skin_id -> (champ_name, skin_key)
+    champ_lookup = {}  # champ_name -> {skin_id: skin_key}
+    champ_skins = {}  # champ_name -> {skin_key: skin_dict}
     canonical_files = []
     for name, ent in champs:
+        csl = champ_lookup.setdefault(name, {})
+        css = champ_skins.setdefault(name, {})
         for sk, info in ent["skins"].items():
             if not isinstance(info, dict):
                 continue
+            css[sk] = info
             skid = info.get("id")
             if isinstance(skid, (int, float)):
-                lookup[int(skid)] = (name, sk)
+                csl[int(skid)] = sk
             bases = skin_bases(name, sk)
             skin_info.append((name, sk, info, bases))
             for b in bases:
@@ -869,9 +873,10 @@ def main():
                 return payload
         v = info.get("variant")
         if isinstance(v, (int, float)):
-            bname, bsk = lookup.get(int(v), (None, None))
-            if bname:
-                return resolve(bname, bsk, {})
+            bsk = champ_lookup.get(name, {}).get(int(v))
+            if bsk:
+                tinfo = champ_skins.get(name, {}).get(bsk) or {}
+                return resolve(name, bsk, tinfo)
         return None
 
     report = []
