@@ -7,7 +7,8 @@ on:
 
 permissions:
   contents: write
-  actions: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: wiki-data
@@ -16,6 +17,8 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.push.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,9 +34,11 @@ jobs:
         run: python build_data.py
 
       - name: Commit and push if changed
+        id: push
         run: |
           if git diff --quiet data/skins.json; then
             echo "No changes to data/skins.json"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
@@ -42,4 +47,30 @@ jobs:
           git commit -m "chore: refresh wiki skin data ($(date +%Y-%m-%d))"
           git pull --rebase origin main
           git push origin main
-          gh workflow run "Deploy to GitHub Pages" --ref main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: refresh
+    if: needs.refresh.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Assemble site
+        run: mkdir -p _site && cp -r web/* _site/ && cp -r data _site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: needs.refresh.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
