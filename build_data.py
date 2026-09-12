@@ -37,6 +37,46 @@ CLUSTER_THRESHOLD = 13
 MATCH_THRESHOLD = 7
 HASH_THUMB_WIDTH = 120
 
+UNKNOWN_ARTIST = "Unknown artist"
+
+# Values in splashartist that are not artist/studio names; a skin whose artist
+# list contains only these (or nothing at all) is credited to UNKNOWN_ARTIST.
+ART_PLACEHOLDERS = frozenset(
+    {
+        "unknown",
+        "unknown artist",
+        "n/a",
+        "na",
+        "none",
+        "tba",
+        "tbd",
+        "not specified",
+        "unspecified",
+        "unlisted",
+        "to be determined",
+        "to be announced",
+        "null",
+        "-",
+        "?",
+    }
+)
+
+
+def normalize_artist(info: dict) -> list:
+    arts = info.get("splashartist") or []
+    if isinstance(arts, str):
+        arts = [arts]
+    names = []
+    for a in arts or []:
+        if not isinstance(a, str):
+            continue
+        t = " ".join(a.split()).lower()
+        if not t or t in ART_PLACEHOLDERS:
+            continue
+        names.append(a)
+    return names or [UNKNOWN_ARTIST]
+
+
 # ---------------------------------------------------------------------------
 # Lua subset parser (MediaWiki dump output)
 # ---------------------------------------------------------------------------
@@ -901,7 +941,7 @@ def main():
             "cost": info.get("cost"),
             "r": info.get("release"),
             "d": art["d"] if art else None,
-            "art": info.get("splashartist") or [],
+            "art": normalize_artist(info),
             "mu": info.get("music"),
             "cr": len(info.get("chromas") or {}) if isinstance(info.get("chromas"), dict) else 0,
             "mid": info.get("id"),
