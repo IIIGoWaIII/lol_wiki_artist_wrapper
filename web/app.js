@@ -24,6 +24,7 @@
   let magZoom = 1.5;
   const MAG_SIZE = 600;
   let lbDown = false;
+  let curFull = null;
 
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -296,6 +297,7 @@
     const img = $("lbImg");
     const bar = $("lbLoadBar");
     bar.classList.remove("done");
+    curFull = rec.img;
 
     img.onload = null;
     img.onerror = null;
@@ -481,7 +483,12 @@
     lbLens.style.top = (e.clientY - wrap.top - MAG_SIZE / 2 + wrapEl.scrollTop) + "px";
   }
   lbImg.addEventListener("mousedown", (e) => {
-    if (e.button !== 0 || lb.hidden) return;
+    if (lb.hidden) return;
+    if (e.button === 1) {
+      e.preventDefault();
+      return;
+    }
+    if (e.button !== 0) return;
     e.preventDefault();
     lbDown = true;
     lbLens.style.width = MAG_SIZE + "px";
@@ -503,6 +510,12 @@
     magZoom = Math.max(1, magZoom + (e.deltaY > 0 ? -0.15 : 0.15));
     magUpdate(e);
   }, { passive: false });
+
+  lbImg.addEventListener("auxclick", (e) => {
+    if (e.button !== 1 || lb.hidden || !curFull) return;
+    e.preventDefault();
+    window.open(curFull, "_blank", "noopener");
+  });
 
   load().catch((e) => { toast("Failed to load data: " + e.message); });
 })();
