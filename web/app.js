@@ -282,14 +282,23 @@
     meta.className = "meta";
     const name = document.createElement("div");
     name.className = "name";
-    name.textContent = rec._label;
+    name.textContent = `${rec.ch} - ${rec._label}`;
     const sub = document.createElement("div");
     sub.className = "sub";
-    sub.textContent = [rec.ch, (rec.set || []).join(", ") || "", (rec.art || [])[0] || ""].filter(Boolean).join(" · ");
+    sub.textContent = [(rec.set || []).join(", ") || "", (rec.art || [])[0] || ""].filter(Boolean).join(" · ");
     meta.append(name, sub);
     card.appendChild(meta);
 
     card.addEventListener("click", () => openLightbox(idx));
+    card.addEventListener("mousedown", (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+    });
+    card.addEventListener("auxclick", (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      window.open(rec.img, "_blank", "noopener");
+    });
     return card;
   }
 
@@ -321,7 +330,7 @@
     const rec = state.filtered[idx];
     const label = rec._label;
 
-    $("lbName").textContent = label;
+    $("lbName").textContent = `${rec.ch} - ${label}`;
     $("lbChamp").textContent = rec.ch;
     $("lbPos").textContent = `${idx + 1} of ${state.filtered.length}`;
 
