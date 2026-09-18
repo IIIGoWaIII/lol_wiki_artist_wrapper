@@ -36,15 +36,15 @@
     return rec.s;
   };
 
-  const yearOf = (rec) => (rec.r && /^\d{4}/.test(rec.r) ? parseInt(rec.r.slice(0, 4), 10) : null);
+  const yearOf = (rec) => (rec._date && /^\d{4}/.test(rec._date) ? parseInt(rec._date.slice(0, 4), 10) : null);
 
   function precompute(rec, i) {
     const set = rec.set || [];
     rec._i = i;
     rec._label = skinLabel(rec);
-    rec._year = yearOf(rec);
     const rOk = rec.r && /^\d{4}-\d{2}-\d{2}$/.test(rec.r);
     rec._date = rec.d || (rOk ? rec.r : null) || null;
+    rec._year = yearOf(rec);
     rec._search = [rec.ch, rec.s, rec.fmt, rec._label, set.join(" "), (rec.art || []).join(" ")]
       .filter(Boolean).join(" ").toLowerCase();
     return rec;
