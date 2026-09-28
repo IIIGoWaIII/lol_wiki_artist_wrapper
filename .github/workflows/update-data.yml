@@ -30,20 +30,20 @@ jobs:
       - name: Install Pillow
         run: pip install Pillow
 
-      - name: Build data/skins.json
+      - name: Build catalogues
         run: python build_data.py
 
       - name: Commit and push if changed
         id: push
         run: |
-          if git diff --quiet data/skins.json; then
-            echo "No changes to data/skins.json"
+          if git diff --quiet -- data/skins.json data/skins-wr.json data/skins-lor.json; then
+            echo "No changes to the skin catalogues"
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/skins.json
+          git add data/skins.json data/skins-wr.json data/skins-lor.json
           git commit -m "chore: refresh wiki skin data ($(date +%Y-%m-%d))"
           git pull --rebase origin main
           git push origin main

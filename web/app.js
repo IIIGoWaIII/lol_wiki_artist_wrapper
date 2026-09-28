@@ -1,6 +1,15 @@
 (() => {
   const STEP = 240;
+  const DEFAULT_GAME = "lol";
+  // Kept in step with the `out` filename of each game in build_data.py.
+  const GAMES = {
+    lol: "skins.json",
+    wr: "skins-wr.json",
+    lor: "skins-lor.json",
+  };
+  const cache = new Map();
   const state = {
+    game: null,
     skins: [],
     filtered: [],
     shown: 0,
@@ -50,13 +59,67 @@
     return rec;
   }
 
-  async function load() {
-    const d = await (await fetch("data/skins.json")).json();
+  async function fetchGame(key) {
+    if (cache.has(key)) return cache.get(key);
+    const p = fetch("data/" + GAMES[key])
+      .then((r) => {
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+        return r.json();
+      })
+      .catch((e) => {
+        cache.delete(key);
+        throw e;
+      });
+    cache.set(key, p);
+    return p;
+  }
+
+  // Every selection belongs to the game it was made in: a champion chosen under
+  // League means nothing in Runeterra, so a tab change starts from a clean slate.
+  function resetFilters() {
+    for (const k of Object.keys(state.sel)) state.sel[k].clear();
+    for (const id of ["psChamps", "psThemes", "psArtists"]) $(id).value = "";
+    $("fYear").value = "";
+    closeLightbox();
+  }
+
+  let loadToken = 0;
+
+  async function load(key) {
+    if (!(key in GAMES)) return;
+    // Two quick tab clicks resolve out of order; only the last one may paint.
+    const token = ++loadToken;
+    const d = await fetchGame(key);
+    if (token !== loadToken) return;
+    state.game = key;
     state.skins = d.skins.map(precompute);
+    // Each game crops artwork to its own native ratio; the CSS reads this.
+    const [w, h] = d.meta.aspect || [1215, 717];
+    document.documentElement.style.setProperty("--ar", `${w} / ${h}`);
+    document.title = d.meta.label ? `${d.meta.label} Splash Reference` : "Splash Reference";
+    for (const tab of $("gametabs").children) {
+      const on = tab.dataset.game === key;
+      tab.classList.toggle("on", on);
+      tab.setAttribute("aria-selected", on ? "true" : "false");
+    }
+    resetFilters();
     buildIndex();
     buildSelects();
     renderPanels();
     apply();
+  }
+
+  function buildSelects() {
+    const years = [...new Set(state.skins.map((s) => s._year).filter((y) => y != null))].sort((a, b) => b - a);
+    const ys = $("fYear");
+    // Drop last game's years but keep the "Any year" placeholder from index.html.
+    while (ys.options.length > 1) ys.remove(1);
+    for (const y of years) {
+      const o = document.createElement("option");
+      o.value = String(y);
+      o.textContent = String(y);
+      ys.appendChild(o);
+    }
   }
 
   function buildIndex() {
@@ -81,17 +144,6 @@
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
     state.artists = [...artists.entries()].map(([name, v]) => ({ name, count: v.count }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }
-
-  function buildSelects() {
-    const years = [...new Set(state.skins.map((s) => s._year).filter((y) => y != null))].sort((a, b) => b - a);
-    const ys = $("fYear");
-    for (const y of years) {
-      const o = document.createElement("option");
-      o.value = String(y);
-      o.textContent = String(y);
-      ys.appendChild(o);
-    }
   }
 
   function renderPanels() {
@@ -205,7 +257,7 @@
       if (sel.champs.size && !sel.champs.has(s.ch)) return false;
       if (sel.themes.size && !(s.set || []).some((t) => sel.themes.has(t))) return false;
       if (sel.artists.size && !(s.art || []).some((a) => sel.artists.has(a))) return false;
-      if (year && s._year != null && String(s._year) !== year) return false;
+      if (year && String(s._year) !== year) return false;
       return true;
     });
 
@@ -526,5 +578,11 @@
     window.open(curFull, "_blank", "noopener");
   });
 
-  load().catch((e) => { toast("Failed to load data: " + e.message); });
+  $("gametabs").addEventListener("click", (e) => {
+    const tab = e.target.closest(".gtab");
+    if (!tab || tab.dataset.game === state.game) return;
+    load(tab.dataset.game).catch((err) => toast("Failed to load data: " + err.message));
+  });
+
+  load(DEFAULT_GAME).catch((e) => { toast("Failed to load data: " + e.message); });
 })();

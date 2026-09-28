@@ -1,20 +1,30 @@
 #!/usr/bin/env python3
 """
-Builds data/skins.json for the LoL wiki reference wrapper.
+Builds one data/<game>.json catalogue per game for the wiki reference wrapper.
 
-1. Fetches Module:SkinData/data (Lua table) from the League of Legends wiki.
+Games (see GAMES): League of Legends, Wild Rift, Legends of Runeterra. TFT is
+deliberately absent -- its sets are League champion skins reusing the same art.
+
+1. Fetches the game's skin/cosmetic data module (Lua table) from the
+   League of Legends wiki. One wiki hosts all three games.
 2. Parses the Lua dialect into plain data structures.
-3. Discovers splash-art files via the wiki image index (allimages prefix search)
-   and pulls the full revision history of each canonical skin file.
+3. Discovers art files via the wiki image index (allimages prefix search)
+   and pulls the full revision history of each canonical file.
 4. Collapses "small iterations" of the same artwork using perceptual hashing
-   (dHash) so only distinct repaints are shown, then upgrades every artwork to
-   its best available resolution (_HD / _oldN_HD files), newest art first.
+    (dHash) so only distinct repaints are shown, then upgrades every artwork to
+    its best available resolution (HD / oldN_HD files), newest art first.
 5. Writes a compact JSON file consumed by the web app.
 
-Usage: python build_data.py       (requires Pillow)
+Wild Rift additionally drops any entry whose artwork is the same picture as the
+League of Legends original -- those carry no information the LoL tab lacks.
+
+Usage: python build_data.py [game ...]     (requires Pillow)
 """
 
+from __future__ import annotations
+
 import json
+import os
 import re
 import sys
 import time
@@ -24,10 +34,11 @@ from io import BytesIO
 
 from PIL import Image
 
-LUA_URL = "https://wiki.leagueoflegends.com/en-us/Module:SkinData/data?action=raw"
-API_URL = "https://wiki.leagueoflegends.com/en-us/api.php"
+WIKI = "https://wiki.leagueoflegends.com/en-us"
+API_URL = WIKI + "/api.php"
 USER_AGENT = "lol-wiki-reference-wrapper/1.0 (local artist tool)"
 OVERRIDES_PATH = "data/artwork_overrides.json"
+DATA_DIR = "data"
 
 # Perceptual-hash settings (0-64 bits hamming distance).
 # CLUSTER_THRESHOLD: revisions within this distance count as the same artwork.
@@ -36,6 +47,16 @@ OVERRIDES_PATH = "data/artwork_overrides.json"
 CLUSTER_THRESHOLD = 13
 MATCH_THRESHOLD = 7
 HASH_THUMB_WIDTH = 120
+
+# A Wild Rift splash this close to the League of Legends original is the same
+# artwork and is dropped from the WR catalogue, since the League tab already
+# holds it. Measured over the 665 WR skins that have a LoL twin, the distances
+# decay smoothly rather than separating: 202 pairs at 0-4, 143 at 5-9, 106 at
+# 10-14, 89 at 15-19, then 167 at 20+. So there is no natural gap to cut at and
+# the value is a judgment call. 10 keeps only re-uploads and re-scales, and
+# leaves a re-cropped variant as its own entry; raising it to 20 would also drop
+# the re-crops and halve the tab to 519 entries.
+CROSS_GAME_DUPLICATE = 10
 
 UNKNOWN_ARTIST = "Unknown artist"
 
@@ -258,12 +279,245 @@ def skin_asset(name: str, aggressive: bool = False) -> str:
     return _LIGHT_STRIP.sub("", name)
 
 
-def skin_bases(champ: str, skin: str) -> list[str]:
-    """Candidate file-base prefixes for a skin, light form first."""
-    prefix = champ_prefix(champ)
-    c1 = f"{prefix}_{skin_asset(skin)}Skin"
-    c2 = f"{prefix}_{skin_asset(skin, aggressive=True)}Skin"
+def _bases_variants(make) -> list[str]:
+    """Build a base from the light and the punctuation-stripped skin name."""
+    c1 = make(False)
+    c2 = make(True)
     return [c1] if c1 == c2 else [c1, c2]
+
+
+# ---------------------------------------------------------------------------
+# Game sources
+# ---------------------------------------------------------------------------
+#
+# One wiki (wiki.leagueoflegends.com) hosts all three games, but each stores its
+# cosmetics differently, so every game supplies its own data module, file-naming
+# rules and output. Everything downstream of the per-game rules below -- image
+# discovery, revision mining, dHash clustering -- is shared.
+
+
+class Entry:
+    """One cosmetic to resolve.
+
+    prefix  file-discovery key (champion name, or a card code for LoR)
+    owner   display name shown in the UI (the champion)
+    skin    cosmetic key, e.g. "Blood Moon"
+    info    the raw data module entry
+    """
+
+    __slots__ = ("prefix", "owner", "skin", "info")
+
+    def __init__(self, prefix: str, owner: str, skin: str, info: dict):
+        self.prefix = prefix
+        self.owner = owner
+        self.skin = skin
+        self.info = info
+
+
+class Game:
+    key = ""
+    label = ""
+    module = ""
+    aspect = (1215, 717)
+    out = ""
+    unit = "Champions"
+
+    def entries(self, raw: str) -> list[Entry]:
+        raise NotImplementedError
+
+    def bases(self, e: Entry) -> list[str]:
+        raise NotImplementedError
+
+    def canons(self, base: str) -> list[str]:
+        """File names holding the current artwork, most likely first."""
+        raise NotImplementedError
+
+    def hd(self, base: str) -> list[str]:
+        raise NotImplementedError
+
+    def hits(self, files: dict, base: str, e: Entry) -> dict:
+        """The discovered files belonging to one cosmetic."""
+        raise NotImplementedError
+
+    def candidates(self, files: dict, base: str, ctx: Ctx) -> list[dict]:
+        raise NotImplementedError
+
+
+class SkinDataGame(Game):
+    """Games stored as champion -> {id, skins: {key -> info}} (LoL, Wild Rift)."""
+
+    suffix = ""
+    skip_marks: tuple = ()
+    # Art extension(s) the wiki uses for this game. Wild Rift uploaded its first
+    # champions as .png and later switched to .jpg, so both have to be probed;
+    # League is .jpg throughout.
+    exts: tuple = (".jpg",)
+
+    def entries(self, raw: str) -> list[Entry]:
+        out = []
+        for name, ent in parse_lua(raw).items():
+            if name.startswith("["):
+                continue
+            if not isinstance(ent, dict) or not isinstance(ent.get("id"), (int, float)):
+                continue
+            skins = ent.get("skins")
+            if not isinstance(skins, dict):
+                continue
+            for sk, info in skins.items():
+                if isinstance(info, dict):
+                    out.append(Entry(name, name, sk, info))
+        return out
+
+    def bases(self, e: Entry) -> list[str]:
+        prefix = champ_prefix(e.prefix)
+        return _bases_variants(
+            lambda agg: f"{prefix}_{skin_asset(e.skin, agg)}Skin{self.suffix}"
+        )
+
+    def canons(self, base: str) -> list[str]:
+        return [base + ext for ext in self.exts]
+
+    def hd(self, base: str) -> list[str]:
+        return [base + "_HD" + ext for ext in self.exts]
+
+    def hits(self, files: dict, base: str, e: Entry) -> dict:
+        own = set(self.canons(base)) | set(self.hd(base))
+        return {fn: r for fn, r in files.items() if fn in own or fn.startswith(base + "_")}
+
+    def candidates(self, files: dict, base: str, ctx: Ctx) -> list[dict]:
+        return classify_siblings(files, base, self.skip_marks, self.canons(base), ctx)
+
+
+class LoL(SkinDataGame):
+    key = "lol"
+    label = "League of Legends"
+    module = "Module:SkinData/data"
+    out = "skins.json"
+    # Non-splash files that share a skin's base prefix: other games' art,
+    # champion icons/portraits, chromas, loading screens, promo and concept art.
+    skip_marks = (
+        "_Ch", "_WR", "_TFT", "_Mobile", "_Chr",
+        "Loading", "Square", "Circle", "Special_Edition",
+        "_Promo", "_Concept", "Concept_", "_Model", "Baron", "Rift",
+    )
+
+
+class WildRift(SkinDataGame):
+    key = "wr"
+    label = "Wild Rift"
+    module = "Module:SkinDataWR/data"
+    out = "skins-wr.json"
+    suffix = "_WR"
+    aspect = (1024, 568)
+    exts = (".jpg", ".png")
+    # Same shapes as League, minus the League-only marks. `_WR` itself is the
+    # canonical suffix here, so it must not be skipped.
+    skip_marks = (
+        "_Ch", "_TFT", "_Mobile", "_Chr",
+        "Loading", "Square", "Circle", "Special_Edition",
+        "_Promo", "_Concept", "Concept_", "_Model", "Baron", "Rift",
+    )
+
+
+# Suffixes that mark an alternate rendering of the same LoR cosmetic, as opposed
+# to a star level (T1-...), a different cosmetic (_Coven-...) or a presentation
+# crop (-display-full).
+_LOR_ALT_RE = re.compile(r"-(?:alt)(?:-hd)?-full\.(?:png|jpg)", re.I)
+
+
+class LegendsOfRuneterra(Game):
+    key = "lor"
+    label = "Legends of Runeterra"
+    module = "Module:LoRCosmetics/skins"
+    names_module = "Module:LoRData/data"
+    out = "skins-lor.json"
+    aspect = (2, 1)
+    unit = "Champions"
+
+    def __init__(self):
+        self._names = {}
+
+    def card_names(self) -> dict:
+        """cardcode -> champion name, from the (much larger) card data module."""
+        if not self._names:
+            data = parse_lua(http_get(f"{WIKI}/{self.names_module}?action=raw").decode("utf-8"))
+            self._names = {
+                code: ent["name"]
+                for code, ent in data.items()
+                if isinstance(ent, dict) and isinstance(ent.get("name"), str)
+            }
+            print(f"    card names loaded: {len(self._names)}")
+        return self._names
+
+    def entries(self, raw: str) -> list[Entry]:
+        names = self.card_names()
+        out = []
+        for code, cosmetics in parse_lua(raw).items():
+            if not isinstance(cosmetics, dict) or code not in names:
+                continue
+            for sk, info in cosmetics.items():
+                if isinstance(info, dict):
+                    out.append(Entry(code, names[code], sk, info))
+        return out
+
+    def bases(self, e: Entry) -> list[str]:
+        # The base card art carries no cosmetic name suffix: 01DE012-full.png.
+        if e.skin == "Original":
+            return [e.prefix]
+        code = e.prefix
+        return _bases_variants(lambda agg: f"{code}_{skin_asset(e.skin, agg)}")
+
+    def canons(self, base: str) -> list[str]:
+        return [base + "-full.png", base + "-full.jpg"]
+
+    def hd(self, base: str) -> list[str]:
+        # Cosmetic HD art is capitalised, base card art is not.
+        return [base + "-HD-full.jpg", base + "-hd-full.jpg"]
+
+    def hits(self, files: dict, base: str, e: Entry) -> dict:
+        # Every cosmetic of a card shares the card's files, so the whole card
+        # prefix is in scope; the per-cosmetic filter happens in candidates().
+        return {fn: r for fn, r in files.items() if fn.startswith(e.prefix)}
+
+    def candidates(self, files: dict, base: str, ctx: Ctx) -> list[dict]:
+        """Alternate art for one cosmetic.
+
+        A LoR card's files are a flat pile: the base card art, one set per
+        cosmetic, and a variant per star level, all sharing the card code. Only
+        the `-alt` family hangs off the cosmetic's own base, so everything else
+        (other cosmetics, `T1`-`T8` star levels, `-display` presentation crops)
+        is a different picture of a different thing and is left out here. What
+        remains goes to the shared dHash matcher, which folds it onto the main
+        artwork when it is the same painting and lists it otherwise.
+        """
+        skip = {*self.canons(base), *self.hd(base)}
+        out = []
+        for fn, rec in files.items():
+            if fn in skip or not fn.startswith(base):
+                continue
+            if not _LOR_ALT_RE.fullmatch(fn[len(base):]):
+                continue
+            out.append(
+                {
+                    "url": rec["url"],
+                    "w": rec["w"],
+                    "h": rec["h"],
+                    "d": (rec.get("ts") or "")[:10],
+                    "n": 1,
+                    "kind": "alt",
+                }
+            )
+        return out
+
+
+GAMES: dict[str, Game] = {g.key: g for g in (LoL(), WildRift(), LegendsOfRuneterra())}
+GAME_ORDER = ["lol", "wr", "lor"]
+
+
+def get_game(key: str) -> Game:
+    if key not in GAMES:
+        sys.exit(f"unknown game {key!r}; choose from {', '.join(GAME_ORDER)}")
+    return GAMES[key]
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +540,10 @@ def thumb_url(full_url: str, width: int) -> str:
 
 
 def thumb_width(art) -> int:
-    return 1200 if (art.get("w") or 0) > 2000 or str(art.get("url", "")).endswith("_HD.jpg") else 420
+    """Thumb size to serve. Big art gets a 1200px thumb so the lightbox can show
+    detail immediately; everything else gets 420px."""
+    url = str(art.get("url", ""))
+    return 1200 if (art.get("w") or 0) > 2000 or re.search(r"[-_]hd-full\.jpg$|_HD\.jpg$", url, re.I) else 420
 
 
 # ---------------------------------------------------------------------------
@@ -408,45 +665,80 @@ def hamming(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
+# Cross-game caches, keyed by wiki-visible names, so they are valid for every
+# game and survive from one game's build into the next. League and Wild Rift
+# files sit under the same champion prefix, so one image-index read serves both
+# and the Wild Rift pass can reach the League originals it de-duplicates against.
+INDEX: dict = {}  # discovery key -> {filename: rec}
+HASHES: dict = {}  # url -> dHash
+HISTORIES: dict = {}  # filename -> [revision, ...]
+CANON_SHA_DATES: dict = {}  # sha1 -> earliest date it appears under
+SIB: dict = {}  # sibling filename -> [revision, ...]
+_SIB_QUEUE: list = []
+_SIB_SEEN: set = set()
+
+
+class Ctx:
+    """Per-game build state. The expensive caches above are shared."""
+
+    def __init__(self, overrides: dict):
+        self.overrides = overrides
+        self.report: list = []
+        self.rev_h: dict = {}  # base -> [(revision, hash)] for art-date recovery
+
+    @property
+    def cache(self) -> dict:
+        return HASHES
+
+    @property
+    def histories(self) -> dict:
+        return HISTORIES
+
+    @property
+    def canon_sha_dates(self) -> dict:
+        return CANON_SHA_DATES
+
+    def revisions(self, fn: str) -> list:
+        return HISTORIES.get(fn) or SIB.get(fn)
+
+    def note_siblings(self, files: dict):
+        """Queue sibling files whose art date needs its own revision history."""
+        for fn in files:
+            if fn in _SIB_SEEN or not _SIB_FN_RE.search(fn):
+                continue
+            _SIB_SEEN.add(fn)
+            _SIB_QUEUE.append(fn)
+            if len(_SIB_QUEUE) >= 45:
+                self.flush_siblings()
+
+    def flush_siblings(self):
+        while _SIB_QUEUE:
+            chunk = _SIB_QUEUE[:45]
+            del _SIB_QUEUE[:45]
+            SIB.update(fetch_histories(chunk))
+
+
 # ---------------------------------------------------------------------------
 # Artwork timeline assembly
 # ---------------------------------------------------------------------------
 
 _OLD_RE = re.compile(r"^_old(\d*)(_HD)?$")
 _UNUSED_RE = re.compile(r"^_Unused(\d*)(_HD)?$")
-_SKIP_MARK = ("_Ch", "_WR", "_TFT", "_Mobile", "_Chr")  # other-game / non-splash files
-
-# Art-creation dates for sibling files (_old/_Unused) are looked up lazily;
-# see _enqueue_siblings / _flush_sibling_histories.
-SIB_HIST = {}
-_SIB_QUEUE = []
-_SIB_SEEN = set()
-_SIB_FN_RE = re.compile(r"_(?:old\d*|Unused\d*)(?:_HD)?\.jpg$")
+_SIB_FN_RE = re.compile(r"_(?:old\d*|Unused\d*)(?:_HD)?\.(?:jpg|png)$", re.I)
 
 
-def _sib_needs_date(fn: str) -> bool:
-    return bool(_SIB_FN_RE.search(fn))
+def index_for(ctx: Ctx, key: str) -> dict:
+    """allimages prefix search, cached. Returns {filename: rec}."""
+    files = INDEX.get(key)
+    if files is None:
+        files = discover_prefix(key)
+        INDEX[key] = files
+        ctx.note_siblings(files)
+        ctx.flush_siblings()
+    return files
 
 
-def _enqueue_siblings(files: dict):
-    for fn in files:
-        if fn in _SIB_SEEN or not _sib_needs_date(fn):
-            continue
-        _SIB_SEEN.add(fn)
-        _SIB_QUEUE.append(fn)
-        if len(_SIB_QUEUE) >= 45:
-            _flush_sibling_histories()
-
-
-def _flush_sibling_histories():
-    if not _SIB_QUEUE:
-        return
-    chunk = _SIB_QUEUE[:45]
-    del _SIB_QUEUE[:45]
-    SIB_HIST.update(fetch_histories(chunk))
-
-
-def art_date(fn: str, rec: dict, histories: dict, canon_sha_dates: dict) -> str:
+def art_date(fn: str, rec: dict, ctx: Ctx) -> str:
     """Creation date of a sibling file's art.
 
     Prefer a byte-identical match against the canonical file history (the file
@@ -454,10 +746,10 @@ def art_date(fn: str, rec: dict, histories: dict, canon_sha_dates: dict) -> str:
     fall back to the sibling's own earliest revision, then its latest upload.
     """
     sha = rec.get("sha1")
-    d = canon_sha_dates.get(sha)
+    d = CANON_SHA_DATES.get(sha)
     if d:
         return d
-    revs = histories.get(fn) or SIB_HIST.get(fn)
+    revs = ctx.revisions(fn)
     if revs:
         dates = [r["ts"][:10] for r in revs if r.get("ts")]
         if dates:
@@ -465,14 +757,7 @@ def art_date(fn: str, rec: dict, histories: dict, canon_sha_dates: dict) -> str:
     return (rec.get("ts") or "")[:10]
 
 
-def recover_art_date(
-    base: str,
-    fn: str,
-    rec: dict,
-    histories: dict,
-    cache: dict,
-    rev_h: dict,
-) -> str | None:
+def recover_art_date(base: str, canon_names: list[str], fn: str, rec: dict, ctx: Ctx) -> str | None:
     """Art-creation date of a sibling that only appeared during a wiki migration
     sweep.
 
@@ -484,16 +769,16 @@ def recover_art_date(
     original bytes, so the birth of the art is the oldest revision whose
     thumbnail matches within the repaint-noise threshold.
     """
-    canon = histories.get(base + ".jpg")
+    canon = next((ctx.histories.get(n) for n in canon_names if ctx.histories.get(n)), None)
     if not canon or not rec.get("url"):
         return None
-    sib = cache.get(rec["url"])
+    sib = ctx.cache.get(rec["url"])
     if sib is None:
-        sib = fetch_thumb_hash(rec["url"], cache)
+        sib = fetch_thumb_hash(rec["url"], ctx.cache)
     if sib is None:
         return None
     creation = None
-    revs = histories.get(fn) or SIB_HIST.get(fn)
+    revs = ctx.revisions(fn)
     if revs:
         dates = [r["ts"][:10] for r in revs if r.get("ts")]
         if dates:
@@ -502,106 +787,85 @@ def recover_art_date(
         creation = (rec.get("ts") or "")[:10]
     if not creation:
         return None
-    if base not in rev_h:
+    if base not in ctx.rev_h:
         hashes = []
         for r in canon:
             if not r.get("url"):
                 hashes.append(None)
                 continue
-            h = cache.get(r["url"])
+            h = ctx.cache.get(r["url"])
             if h is None:
-                h = fetch_thumb_hash(r["url"], cache)
+                h = fetch_thumb_hash(r["url"], ctx.cache)
             hashes.append(h)
-        rev_h[base] = list(zip(canon, hashes))
+        ctx.rev_h[base] = list(zip(canon, hashes))
     oldest = None
-    for r, h in rev_h[base]:
+    for r, h in ctx.rev_h[base]:
         if not r.get("ts") or r["ts"][:10] >= creation:
             continue
-        ok = h is not None and bin(h ^ sib).count("1") <= CLUSTER_THRESHOLD
+        ok = h is not None and hamming(h, sib) <= CLUSTER_THRESHOLD
         if ok:
             oldest = r["ts"][:10]
     return oldest
 
 
-def classify_siblings(
-    files: dict,
-    base: str,
-    histories: dict,
-    canon_sha_dates: dict,
-    cache: dict,
-    rev_h: dict,
-) -> tuple[list, list]:
-    """Split sibling files into old-art and unused-art candidates.
+def classify_siblings(files: dict, base: str, skip_marks: tuple, canon_names: list[str], ctx: Ctx) -> list[dict]:
+    """Sibling files of a League/Wild Rift skin, oldest-art and unused first.
 
-    Returns (old_list, unused_list); each item is {url, w, h, d, n}.
+    Each item is {url, w, h, d, n, kind} and carries no filename: the shared
+    dHash matcher downstream works on pixels, not names.
     """
     olds, unuseds = [], []
     for fn, rec in files.items():
-        if not fn.endswith(".jpg"):
+        if not fn.endswith((".jpg", ".png")):
             continue
-        if fn == base + ".jpg":
+        if fn in canon_names:
             continue  # canonical file, handled via history
-        rest = fn[:-4][len(base):]
+        rest = fn.rsplit(".", 1)[0][len(base):]
         if not rest.startswith("_"):
             continue
-        if any(m in rest for m in _SKIP_MARK):
+        if any(m in rest for m in skip_marks):
             continue
-        m = _OLD_RE.match(rest)
-        if m:
-            d = art_date(fn, rec, histories, canon_sha_dates)
-            rd = recover_art_date(base, fn, rec, histories, cache, rev_h)
-            if rd and (not d or rd < d):
-                d = rd
-            olds.append(
-                {
-                    "fn": fn,
-                    "url": rec["url"],
-                    "w": rec["w"],
-                    "h": rec["h"],
-                    "d": d,
-                    "n": int(m.group(1) or 1),
-                }
-            )
+        m = _OLD_RE.match(rest) or _UNUSED_RE.match(rest)
+        if not m:
             continue
-        m = _UNUSED_RE.match(rest)
-        if m:
-            d = art_date(fn, rec, histories, canon_sha_dates)
-            rd = recover_art_date(base, fn, rec, histories, cache, rev_h)
-            if rd and (not d or rd < d):
-                d = rd
-            unuseds.append(
-                {
-                    "fn": fn,
-                    "url": rec["url"],
-                    "w": rec["w"],
-                    "h": rec["h"],
-                    "d": d,
-                    "n": int(m.group(1) or 1),
-                }
-            )
+        d = art_date(fn, rec, ctx)
+        rd = recover_art_date(base, canon_names, fn, rec, ctx)
+        if rd and (not d or rd < d):
+            d = rd
+        cands = olds if _OLD_RE.match(rest) else unuseds
+        cands.append(
+            {
+                "url": rec["url"],
+                "w": rec["w"],
+                "h": rec["h"],
+                "d": d,
+                "n": int(m.group(1) or 1),
+            }
+        )
 
     for lst in (olds, unuseds):
-        by_fn = {c["fn"]: c for c in lst}
+        by_url = {c["url"]: c for c in lst}
         for c in lst:
-            if not c["fn"].endswith("_HD.jpg") or not c.get("d"):
+            stem, ext = os.path.splitext(c["url"])
+            if not stem.endswith("_HD") or not c.get("d"):
                 continue
-            partner = by_fn.get(c["fn"][:-7] + ".jpg")
+            partner = by_url.get(stem[:-3] + ext)
             if not partner or not partner.get("d") or partner["d"] >= c["d"]:
                 continue
-            h1 = cache.get(c["url"])
+            h1 = ctx.cache.get(c["url"])
             if h1 is None:
-                h1 = fetch_thumb_hash(c["url"], cache)
-            h2 = cache.get(partner["url"])
+                h1 = fetch_thumb_hash(c["url"], ctx.cache)
+            h2 = ctx.cache.get(partner["url"])
             if h2 is None:
-                h2 = fetch_thumb_hash(partner["url"], cache)
-            if h1 and h2 and bin(h1 ^ h2).count("1") <= CLUSTER_THRESHOLD:
+                h2 = fetch_thumb_hash(partner["url"], ctx.cache)
+            if h1 and h2 and hamming(h1, h2) <= CLUSTER_THRESHOLD:
                 c["d"] = partner["d"]
 
     for c in olds:
-        del c["fn"]
+        c["kind"] = "old"
     for c in unuseds:
-        del c["fn"]
-    return olds, unuseds
+        c["kind"] = "unused"
+    return olds + unuseds
 
 
 def dedupe_history(revs: list[dict]) -> list[dict]:
@@ -652,7 +916,7 @@ def cluster_history(arts: list[dict], cache: dict) -> list[list[dict]]:
     return clusters
 
 
-def build_timeline(base: str, revs: list[dict], force: list[str] | None, cache: dict, report: list) -> list[dict]:
+def build_timeline(base: str, revs: list[dict], force: list[str] | None, ctx: Ctx) -> list[dict]:
     """Produce the distinct-artwork timeline (newest first) for one skin.
 
     Each returned art has url/w/h/d/ts/sha1. `force` is an optional override
@@ -680,7 +944,7 @@ def build_timeline(base: str, revs: list[dict], force: list[str] | None, cache: 
             return sel
     if not arts:
         return []
-    clusters = cluster_history(arts, cache)
+    clusters = cluster_history(arts, ctx.cache)
     keeps = [pick_keep(cl, i == 0) for i, cl in enumerate(clusters)]
     # Backdate each artwork to when its family was first created: the oldest
     # revision in the cluster, so repaints/re-uploads don't masquerade as new
@@ -690,7 +954,7 @@ def build_timeline(base: str, revs: list[dict], force: list[str] | None, cache: 
         k["ts"] = cl[-1]["ts"] or k["ts"]
     dropped = [a for a in arts if all(a is not k for k in keeps)]
     if dropped or len(keeps) > 1:
-        report.append(
+        ctx.report.append(
             f"{base}: kept {[k['d'] for k in keeps]} dropped {[a['d'] for a in dropped]}"
         )
     return keeps
@@ -730,50 +994,44 @@ def match_siblings(arts: list[dict], cands: list[dict], cache: dict) -> tuple[di
     return upgrade, extras
 
 
-def assemble(
-    base: str,
-    files: dict,
-    histories: dict,
-    cache: dict,
-    overrides: dict,
-    report: list,
-    canon_sha_dates: dict,
-) -> dict | None:
+def assemble(game: Game, base: str, files: dict, ctx: Ctx) -> dict | None:
     """Assemble the artwork payload for one skin base. Returns None if nothing found."""
+    canon_fns = game.canons(base)
+    canon_fn = next((fn for fn in canon_fns if fn in files), None)
+    hd = next((files[fn] for fn in game.hd(base) if fn in files), None)
+
     force = None
-    if base in overrides:
-        ov = overrides[base]
+    if base in ctx.overrides:
+        ov = ctx.overrides[base]
         force = ov if isinstance(ov, list) else ov.get("keep")
 
     arts = []
-    revs = histories.get(base + ".jpg")
+    revs = ctx.histories.get(canon_fn) if canon_fn else None
     if revs:
-        arts = build_timeline(base, revs, force, cache, report)
+        arts = build_timeline(base, revs, force, ctx)
     if not arts and not force:
         # No usable history (missing canonical file): synthesize from current art.
-        cur = files.get(base + ".jpg") or files.get(base + "_HD.jpg")
+        cur = files.get(canon_fn) if canon_fn else None
+        if cur is None:
+            cur = hd
         if not cur:
             return None
         arts = [{"url": cur["url"], "w": cur["w"], "h": cur["h"], "d": (cur["ts"] or "")[:10]}]
     if not arts:
         return None
 
-    hd = files.get(base + "_HD.jpg")
     if hd and len(arts) == 1:
         arts[0]["url"], arts[0]["w"], arts[0]["h"] = hd["url"], hd["w"], hd["h"]
 
-    rev_h = {}
-    olds, unuseds = classify_siblings(files, base, histories, canon_sha_dates, cache, rev_h)
-    cands = [dict(c, kind="old") for c in olds] + [dict(c, kind="unused") for c in unuseds]
-
-    upgrade, extras = match_siblings(arts, cands, cache)
+    cands = game.candidates(files, base, ctx)
+    upgrade, extras = match_siblings(arts, cands, ctx.cache)
     for i, c in upgrade.items():
         arts[i]["url"], arts[i]["w"], arts[i]["h"] = c["url"], c["w"], c["h"]
 
-    # A bare _HD file is a high-resolution copy of the current art; always use
-    # it as the main image (never a separate version), regardless of how far its
-    # downscaled hash drifts from the base file.
-    if hd and "HD" not in arts[0]["url"]:
+    # A hi-res sibling is a copy of the current art; always use it as the main
+    # image (never a separate version), regardless of how far its downscaled
+    # hash drifts from the base file.
+    if hd and hd["url"] not in arts[0]["url"]:
         art_area = (arts[0].get("w") or 0) * (arts[0].get("h") or 0)
         hd_area = (hd.get("w") or 0) * (hd.get("h") or 0)
         if hd_area > art_area:
@@ -795,7 +1053,7 @@ def assemble(
     for c in extras:
         versions.append(
             {
-                "l": "Unused" if c["kind"] == "unused" else "Old",
+                "l": c.get("kind", "unused").capitalize(),
                 "d": c["d"],
                 "img": c["url"],
                 "t": thumb_url(c["url"], thumb_width(c)),
@@ -820,131 +1078,109 @@ def assemble(
 # ---------------------------------------------------------------------------
 
 
-def main():
-    print("fetching lua data...")
-    raw = http_get(LUA_URL).decode("utf-8")
-    data = parse_lua(raw)
-    if not isinstance(data, dict):
-        sys.exit(f"parse produced {type(data)}, expected dict")
-
-    champs = []
-    for name, ent in data.items():
-        if name.startswith("["):
-            continue
-        if not isinstance(ent, dict) or "skins" not in ent or not isinstance(ent["skins"], dict):
-            continue
-        if not isinstance(ent.get("id"), (int, float)):
-            continue
-        champs.append((name, ent))
-    print(f"champions parsed: {len(champs)}")
-
-    import os
-
+def load_overrides() -> dict:
     try:
         with open(OVERRIDES_PATH, encoding="utf-8") as f:
-            overrides = json.load(f)
-    except FileNotFoundError:
-        overrides = {}
-        try:
-            os.makedirs("data", exist_ok=True)
-        except OSError:
-            pass
-    print(f"overrides loaded: {len(overrides)}")
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
-    # champion -> base prefixes -> skin records
-    skin_info = []  # (champ_name, skin_key, skin_dict, bases, entry_id)
-    champ_lookup = {}  # champ_name -> {skin_id: skin_key}
-    champ_skins = {}  # champ_name -> {skin_key: skin_dict}
-    canonical_files = []
-    for name, ent in champs:
-        csl = champ_lookup.setdefault(name, {})
-        css = champ_skins.setdefault(name, {})
-        for sk, info in ent["skins"].items():
-            if not isinstance(info, dict):
-                continue
-            css[sk] = info
-            skid = info.get("id")
-            if isinstance(skid, (int, float)):
-                csl[int(skid)] = sk
-            bases = skin_bases(name, sk)
-            skin_info.append((name, sk, info, bases))
-            for b in bases:
-                canonical_files.append(b + ".jpg")
-    print(f"skins: {len(skin_info)}; fetching file histories...")
-    histories = fetch_histories(canonical_files)
 
-    canon_sha_dates = {}
-    for fn, revs in histories.items():
+def is_lol_twin(game: Game, base: str) -> bool:
+    """True when a Wild Rift base has a League of Legends counterpart.
+
+    The two games use the same file layout, so the League file is the same base
+    without the _WR suffix. Most Wild Rift skins are exclusive and have no
+    counterpart at all, which is the common case.
+    """
+    return game.key == "wr" and base.endswith("_WR")
+
+
+def build_game(game: Game, overrides: dict) -> dict:
+    """Build one game's catalogue and write it to data/<out>."""
+    ctx = Ctx(overrides)
+    print(f"\n=== {game.label} ===")
+
+    print("fetching lua data...")
+    entries = game.entries(http_get(f"{WIKI}/{game.module}?action=raw").decode("utf-8"))
+    owners = sorted({e.owner for e in entries})
+    print(f"{game.unit.lower()} parsed: {len(owners)} ({len(entries)} cosmetics)")
+
+    print("fetching file histories...")
+    wanted = sorted({fn for e in entries for b in game.bases(e) for fn in game.canons(b)})
+    HISTORIES.update(fetch_histories(wanted))
+    for fn, revs in HISTORIES.items():
         for r in revs:
-            sha = r.get("sha1")
-            ts = r.get("ts", "")[:10]
+            sha, ts = r.get("sha1"), r.get("ts", "")[:10]
             if sha and ts:
-                canon_sha_dates[sha] = min(canon_sha_dates.get(sha, ts), ts)
+                CANON_SHA_DATES[sha] = min(CANON_SHA_DATES.get(sha, ts), ts)
 
-    print("discovering splash files via image index...")
-    champ_cache = {}
-    cache = {}  # thumb-hash cache {url: hash}
+    print("discovering art files via image index...")
 
-    def files_for_base(champ: str, base: str) -> dict:
-        key = champ_prefix(champ)
-        files = champ_cache.get(key)
-        if files is None:
-            files = discover_prefix(key)
-            champ_cache[key] = files
-            _enqueue_siblings(files)
-            _flush_sibling_histories()
-            histories.update(SIB_HIST)
-        hits = {fn: r for fn, r in files.items() if fn == base + ".jpg" or fn.startswith(base + "_")}
+    def files_for(e: Entry, base: str) -> dict:
+        key = e.prefix if isinstance(game, LegendsOfRuneterra) else champ_prefix(e.prefix)
+        hits = game.hits(index_for(ctx, key), base, e)
         if not hits:
-            files = discover_prefix(base)
-            _enqueue_siblings(files)
-            _flush_sibling_histories()
-            histories.update(SIB_HIST)
-            hits = {fn: r for fn, r in files.items() if fn == base + ".jpg" or fn.startswith(base + "_")}
+            hits = game.hits(index_for(ctx, base), base, e)
         return hits
 
-    def resolve(name, sk, info):
-        for base in skin_bases(name, sk):
-            files = files_for_base(name, base)
-            if not files and base not in histories:
-                continue
-            payload = assemble(base, files, histories, cache, overrides, report, canon_sha_dates)
-            if payload:
-                return payload
-        v = info.get("variant")
-        if isinstance(v, (int, float)):
-            bsk = champ_lookup.get(name, {}).get(int(v))
-            if bsk:
-                tinfo = champ_skins.get(name, {}).get(bsk) or {}
-                return resolve(name, bsk, tinfo)
-        return None
+    # variant: a chroma-style entry pointing at another skin of the same owner.
+    lookup: dict[str, dict[int, str]] = {}
+    by_skin: dict[str, dict[str, dict]] = {}
+    if isinstance(game, SkinDataGame):
+        for e in entries:
+            skid = e.info.get("id")
+            if isinstance(skid, (int, float)):
+                lookup.setdefault(e.prefix, {})[int(skid)] = e.skin
+            by_skin.setdefault(e.prefix, {})[e.skin] = e.info
 
-    report = []
+    def resolve(e: Entry, depth: int = 0):
+        for base in game.bases(e):
+            files = files_for(e, base)
+            if not files and base not in ctx.histories:
+                continue
+            payload = assemble(game, base, files, ctx)
+            if payload:
+                return base, payload
+        if depth > 3:
+            return None, None
+        v = e.info.get("variant")
+        if isinstance(v, (int, float)):
+            other = lookup.get(e.prefix, {}).get(int(v))
+            if other and other != e.skin:
+                return resolve(Entry(e.prefix, e.owner, other, by_skin[e.prefix][other]), depth + 1)
+        return None, None
+
     skins = []
-    set_counts = {}
+    set_counts: dict[str, int] = {}
     missing_img = 0
-    prev_champ = None
-    done_champs = 0
-    for name, sk, info, bases in skin_info:
-        if name != prev_champ:
-            prev_champ = name
-            done_champs += 1
-            if done_champs % 5 == 0 or done_champs == 1:
-                print(f"  champion {done_champs}/{len(champs)}: {name}", flush=True)
-        art = resolve(name, sk, info)
+    dupes = 0
+    prev = None
+    done = 0
+    for e in entries:
+        if e.owner != prev:
+            prev = e.owner
+            done += 1
+            if done % 5 == 0 or done == 1:
+                print(f"  {game.unit[:-1].lower()} {done}/{len(owners)}: {e.owner}", flush=True)
+        base, art = resolve(e)
+        if base and art and is_lol_twin(game, base):
+            if drop_as_lol_duplicate(game, e, base, art, ctx):
+                dupes += 1
+                continue
         rec = {
-            "ch": name,
-            "s": sk,
-            "fmt": info.get("formatname"),
-            "set": info.get("set"),
-            "avail": info.get("availability"),
-            "cost": info.get("cost"),
-            "r": info.get("release"),
+            "ch": e.owner,
+            "s": e.skin,
+            "fmt": e.info.get("formatname"),
+            "set": e.info.get("set"),
+            "avail": e.info.get("availability"),
+            "cost": e.info.get("cost"),
+            "r": e.info.get("release"),
             "d": art["d"] if art else None,
-            "art": normalize_artist(info),
-            "mu": info.get("music"),
-            "cr": len(info.get("chromas") or {}) if isinstance(info.get("chromas"), dict) else 0,
-            "mid": info.get("id"),
+            "art": normalize_artist(e.info),
+            "mu": e.info.get("music"),
+            "cr": len(e.info.get("chromas") or {}) if isinstance(e.info.get("chromas"), dict) else 0,
+            "mid": e.info.get("id"),
             "img": art["img"] if art else None,
             "t": art["t"] if art else None,
             "w": art["w"] if art else None,
@@ -954,34 +1190,68 @@ def main():
             rec["v"] = art["v"]
         if not rec["img"]:
             missing_img += 1
-        st = rec["set"]
-        if isinstance(st, list):
-            for s in st:
-                set_counts[s] = set_counts.get(s, 0) + 1
+        for s in rec["set"] if isinstance(rec["set"], list) else []:
+            set_counts[s] = set_counts.get(s, 0) + 1
         skins.append(rec)
 
-    _flush_sibling_histories()
-    histories.update(SIB_HIST)
+    ctx.flush_siblings()
 
     sets = sorted(set_counts.items(), key=lambda kv: (-kv[1], kv[0]))
     meta = {
         "gen": time.strftime("%Y-%m-%d"),
-        "championCount": len(champs),
+        "game": game.key,
+        "label": game.label,
+        "aspect": list(game.aspect),
+        "unit": game.unit,
+        "ownerCount": len(owners),
         "skinCount": len(skins),
         "missingImage": missing_img,
-        "champions": [c for c, _ in champs],
         "sets": sets,
     }
-    payload = {"meta": meta, "skins": skins}
-    os.makedirs("data", exist_ok=True)
-    with open("data/skins.json", "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+    if dupes:
+        meta["droppedAsLoLDuplicate"] = dupes
 
-    print(f"wrote data/skins.json: {len(skins)} skins, {len(sets)} sets, {missing_img} skins without image")
-    if report:
-        print(f"multi-art skins ({len(report)}):")
-        for line in report:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    path = os.path.join(DATA_DIR, game.out)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"meta": meta, "skins": skins}, f, ensure_ascii=False, separators=(",", ":"))
+
+    extra = f", {dupes} dropped as League duplicates" if dupes else ""
+    print(f"wrote {path}: {len(skins)} entries, {len(sets)} sets, {missing_img} without image{extra}")
+    if ctx.report:
+        print(f"multi-art cosmetics ({len(ctx.report)}):")
+        for line in ctx.report:
             print("  " + line)
+    return {"meta": meta, "skins": skins}
+
+
+def drop_as_lol_duplicate(game: Game, e: Entry, base: str, art: dict, ctx: Ctx) -> bool:
+    """True when this Wild Rift splash is the same picture as the League original.
+
+    Wild Rift ports many League skins unchanged, and those files are already in
+    the LoL catalogue at higher resolution, so keeping them would just show the
+    same painting twice.
+    """
+    lol_game = GAMES["lol"]
+    lol_base = base[: -len(game.suffix)]
+    lol_files = index_for(ctx, champ_prefix(e.prefix))
+    rec = next((lol_files[fn] for fn in lol_game.canons(lol_base) if fn in lol_files), None)
+    if not rec:
+        return False
+    a = fetch_thumb_hash(art["img"], ctx.cache)
+    b = fetch_thumb_hash(rec["url"], ctx.cache)
+    if a is None or b is None:
+        return False
+    return hamming(a, b) <= CROSS_GAME_DUPLICATE
+
+
+def main():
+    keys = sys.argv[1:] or GAME_ORDER
+    games = [get_game(k) for k in keys]
+    overrides = load_overrides()
+    print(f"overrides loaded: {len(overrides)}")
+    for game in games:
+        build_game(game, overrides)
 
 
 if __name__ == "__main__":

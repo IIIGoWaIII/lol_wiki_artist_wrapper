@@ -16,7 +16,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
-DATA_FILE = ROOT / "data" / "skins.json"
+DATA_DIR = ROOT / "data"
+# The only data files the page may fetch. An allowlist rather than a path check,
+# so the build inputs (artwork_overrides.json) stay server-side.
+DATA_FILES = ("skins.json", "skins-wr.json", "skins-lor.json")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -26,13 +29,18 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path.startswith("/data/"):
-            self._static(DATA_FILE)
+            self._static(DATA_DIR, parsed.path[len("/data/"):], allowed=DATA_FILES)
             return
-        self._static(WEB_DIR / parsed.path.lstrip("/"))
+        self._static(WEB_DIR, parsed.path.lstrip("/"))
 
     def do_HEAD(self):
         parsed = urllib.parse.urlparse(self.path)
-        self._static(WEB_DIR / parsed.path.lstrip("/"), head=True)
+        if parsed.path.startswith("/data/"):
+            self._static(
+                DATA_DIR, parsed.path[len("/data/"):], allowed=DATA_FILES, head=True
+            )
+            return
+        self._static(WEB_DIR, parsed.path.lstrip("/"), head=True)
 
     # ------------------------------------------------------------------
     def _send_headers(self, code=200, ctype="text/html", length=None, extra=None):
@@ -46,22 +54,26 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.end_headers()
 
-    def _static(self, path: Path, head=False):
-        path = path.resolve()
-        if path != DATA_FILE:
-            try:
-                path.relative_to(WEB_DIR)
-            except ValueError:
-                self._send_headers(404, "text/plain")
-                if not head:
-                    self.wfile.write(b"not found")
-                return
-        if path.is_dir():
-            path = path / "index.html"
+    def _not_found(self, head):
+        self._send_headers(404, "text/plain")
+        if not head:
+            self.wfile.write(b"not found")
+
+    def _static(self, root: Path, rel: str, allowed=None, head=False):
+        rel = rel.lstrip("/")
+        if not rel or rel.endswith("/"):
+            rel += "index.html"
+        try:
+            path = (root / rel).resolve()
+            path.relative_to(root)
+        except (ValueError, OSError):
+            self._not_found(head)
+            return
+        if allowed is not None and path.name not in allowed:
+            self._not_found(head)
+            return
         if not path.is_file():
-            self._send_headers(404, "text/plain")
-            if not head:
-                self.wfile.write(b"not found")
+            self._not_found(head)
             return
         ct = {
             ".html": "text/html; charset=utf-8",
