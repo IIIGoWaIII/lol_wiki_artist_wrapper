@@ -18,7 +18,7 @@ deliberately absent -- its sets are League champion skins reusing the same art.
 Wild Rift additionally drops any entry whose artwork is the same picture as the
 League of Legends original -- those carry no information the LoL tab lacks.
 
-Usage: python build_data.py [game ...]     (requires Pillow)
+Usage: python build_data.py [game ...]     (requires Pillow, numpy)
 """
 
 from __future__ import annotations
@@ -32,7 +32,8 @@ import urllib.parse
 import urllib.request
 from io import BytesIO
 
-from PIL import Image
+import numpy as np
+from PIL import Image, ImageFilter
 
 WIKI = "https://wiki.leagueoflegends.com/en-us"
 API_URL = WIKI + "/api.php"
@@ -51,15 +52,18 @@ HASH_THUMB_WIDTH = 120
 # A Wild Rift splash this close to the League of Legends original is the same
 # artwork and is dropped from the WR catalogue, since the League tab already
 # holds it. The LoL tab displays the _HD file when the wiki has one, and that
-# file is often a different crop of the canonical, so the WR splash is hashed
-# against both and the closer match decides. 20 is measured, not guessed: over
-# the 295 same-named WR pairs it catches the reported duplicates (Hwei Original
-# 20, Hwei Winterblessed 5, Kayn Odyssey 9), puts 47 pairs at 0-10 with none of
-# them scoring like a distinct painting, and no lower cut catches Hwei Original
-# at all. Above 10 the distances decay smoothly with no natural gap, so the cut
-# past 10 is a judgment call; 13 of the dropped pairs score like distinct
-# paintings on a blurred correlation, all of them same-named re-shoots.
-CROSS_GAME_DUPLICATE = 20
+# file is often a different crop of the canonical, so the WR splash is compared
+# against both. No single metric separates same-painting from re-cropped pairs:
+# the dHash distance decays smoothly with no natural gap, and re-cropped pairs
+# can score closer than true duplicates (Jax Original, distinct WR art, sits at
+# dHash 17 while the reported duplicate Hwei Original sits at 20), so a drop
+# needs one of two agreements. 10: measured zero false positives, catches
+# re-uploads and re-scales. 0.70: the blurred-Pearson band boundary, where the
+# same-painting set reaches down and the distinct-painting set reaches up; it
+# catches re-crops the dHash cannot align (Rakan Original scores 0.996 at
+# dHash 25).
+CROSS_GAME_DUPLICATE = 10
+CROSS_GAME_DUPLICATE_CORR = 0.70
 
 UNKNOWN_ARTIST = "Unknown artist"
 
@@ -668,6 +672,86 @@ def hamming(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
+# Blurred-Pearson correlation over scale- and slide-aligned thumbnails. The
+# only measured metric that separates same-painting from re-cropped WR pairs;
+# used by the cross-game duplicate rule. Values run -1..1.
+CORR_SCALES = (0.86, 0.90, 0.92, 0.94, 0.96, 0.98, 1.0, 1.02, 1.04, 1.06, 1.08, 1.10, 1.14)
+CORR_STEP = 2
+CORR_RANGE_FRAC = 0.14
+
+_CORR_THUMBS: dict[str, Image.Image | None] = {}
+
+
+def corr_thumb_img(url: str) -> Image.Image | None:
+    """Small blurred greyscale copy of an image, cached by URL."""
+    if url in _CORR_THUMBS:
+        return _CORR_THUMBS[url]
+    img = None
+    try:
+        data = http_get(thumb_url(url, 240))
+        img = Image.open(BytesIO(data)).convert("L").filter(ImageFilter.GaussianBlur(2))
+    except Exception:  # noqa: BLE001
+        img = None
+    _CORR_THUMBS[url] = img
+    return img
+
+
+def _corr(a: np.ndarray, b: np.ndarray) -> float:
+    a = a.ravel()
+    b = b.ravel()
+    a = a - a.mean()
+    b = b - b.mean()
+    denom = np.sqrt((a * a).sum() * (b * b).sum())
+    if denom == 0:
+        return 0.0
+    return float((a * b).sum() / denom)
+
+
+def best_corr(wr: Image.Image, lol: Image.Image) -> float:
+    """Best Pearson correlation of the WR art against the LoL art across a
+    scale and slide search."""
+    arr_w = np.asarray(wr, dtype=np.float32)
+    best = -1.0
+    wh, ww = arr_w.shape
+    for f in CORR_SCALES:
+        h = round(wh * f)
+        ls = lol.resize((max(8, round(lol.size[0] * h / lol.size[1])), h), Image.Resampling.LANCZOS)
+        arr_l = np.asarray(ls, dtype=np.float32)
+        lh, lw = arr_l.shape
+        ys = range(0, max(1, abs(wh - lh) + int(wh * CORR_RANGE_FRAC)), CORR_STEP)
+        dys = (0,) if wh == lh else [v for y in ys for v in (y, -y)]
+        span_x = abs(ww - lw) // 2 + int(ww * CORR_RANGE_FRAC)
+        xs = range(0, span_x + 1, CORR_STEP)
+        dxs = (0,) if ww == lw else [v for x in xs for v in (x, -x)]
+        for dy in dys:
+            oy = (wh - lh) // 2 + dy
+            if lh <= wh:
+                if oy < 0 or oy + lh > wh:
+                    continue
+                wa = arr_w[oy : oy + lh]
+                la = arr_l
+            else:
+                cy = (-oy) if oy < 0 else 0
+                if cy + wh > lh:
+                    continue
+                wa = arr_w
+                la = arr_l[cy : cy + wh]
+            for dx in dxs:
+                ox = (ww - lw) // 2 + dx
+                if lw <= ww:
+                    if ox < 0 or ox + lw > ww:
+                        continue
+                    c = _corr(wa[:, ox : ox + lw], la)
+                else:
+                    cx = (-ox) if ox < 0 else 0
+                    if cx + ww > lw:
+                        continue
+                    c = _corr(wa, la[:, cx : cx + ww])
+                if c > best:
+                    best = c
+    return best
+
+
 # Cross-game caches, keyed by wiki-visible names, so they are valid for every
 # game and survive from one game's build into the next. League and Wild Rift
 # files sit under the same champion prefix, so one image-index read serves both
@@ -1235,8 +1319,9 @@ def drop_as_lol_duplicate(game: Game, e: Entry, base: str, art: dict, ctx: Ctx) 
     the LoL catalogue at higher resolution, so keeping them would just show the
     same painting twice. The LoL tab displays the _HD file when the wiki has
     one, and HD is often a different crop of the canonical file, so both are
-    compared and the closer match decides; hashing against only one of the two
-    crops produced distances that let re-cropped twins survive.
+    compared. No single metric separates same-painting from re-cropped pairs,
+    so the drop needs one of two agreements: a dHash distance of 10 or less, or
+    a blurred correlation of 0.70 or more.
     """
     lol_game = GAMES["lol"]
     lol_base = base[: -len(game.suffix)]
@@ -1249,11 +1334,17 @@ def drop_as_lol_duplicate(game: Game, e: Entry, base: str, art: dict, ctx: Ctx) 
     if not recs:
         return False
     a = fetch_thumb_hash(art["img"], ctx.cache)
-    if a is None:
+    if a is not None:
+        for rec in recs:
+            b = fetch_thumb_hash(rec["url"], ctx.cache)
+            if b is not None and hamming(a, b) <= CROSS_GAME_DUPLICATE:
+                return True
+    wr_img = corr_thumb_img(art["img"])
+    if wr_img is None:
         return False
     for rec in recs:
-        b = fetch_thumb_hash(rec["url"], ctx.cache)
-        if b is not None and hamming(a, b) <= CROSS_GAME_DUPLICATE:
+        lol_img = corr_thumb_img(rec["url"])
+        if lol_img is not None and best_corr(wr_img, lol_img) >= CROSS_GAME_DUPLICATE_CORR:
             return True
     return False
 
