@@ -50,13 +50,16 @@ HASH_THUMB_WIDTH = 120
 
 # A Wild Rift splash this close to the League of Legends original is the same
 # artwork and is dropped from the WR catalogue, since the League tab already
-# holds it. Measured over the 665 WR skins that have a LoL twin, the distances
-# decay smoothly rather than separating: 202 pairs at 0-4, 143 at 5-9, 106 at
-# 10-14, 89 at 15-19, then 167 at 20+. So there is no natural gap to cut at and
-# the value is a judgment call. 10 keeps only re-uploads and re-scales, and
-# leaves a re-cropped variant as its own entry; raising it to 20 would also drop
-# the re-crops and halve the tab to 519 entries.
-CROSS_GAME_DUPLICATE = 10
+# holds it. The LoL tab displays the _HD file when the wiki has one, and that
+# file is often a different crop of the canonical, so the WR splash is hashed
+# against both and the closer match decides. 20 is measured, not guessed: over
+# the 295 same-named WR pairs it catches the reported duplicates (Hwei Original
+# 20, Hwei Winterblessed 5, Kayn Odyssey 9), puts 47 pairs at 0-10 with none of
+# them scoring like a distinct painting, and no lower cut catches Hwei Original
+# at all. Above 10 the distances decay smoothly with no natural gap, so the cut
+# past 10 is a judgment call; 13 of the dropped pairs score like distinct
+# paintings on a blurred correlation, all of them same-named re-shoots.
+CROSS_GAME_DUPLICATE = 20
 
 UNKNOWN_ARTIST = "Unknown artist"
 
@@ -1230,19 +1233,29 @@ def drop_as_lol_duplicate(game: Game, e: Entry, base: str, art: dict, ctx: Ctx) 
 
     Wild Rift ports many League skins unchanged, and those files are already in
     the LoL catalogue at higher resolution, so keeping them would just show the
-    same painting twice.
+    same painting twice. The LoL tab displays the _HD file when the wiki has
+    one, and HD is often a different crop of the canonical file, so both are
+    compared and the closer match decides; hashing against only one of the two
+    crops produced distances that let re-cropped twins survive.
     """
     lol_game = GAMES["lol"]
     lol_base = base[: -len(game.suffix)]
     lol_files = index_for(ctx, champ_prefix(e.prefix))
-    rec = next((lol_files[fn] for fn in lol_game.canons(lol_base) if fn in lol_files), None)
-    if not rec:
+    recs = [
+        lol_files[fn]
+        for fn in lol_game.canons(lol_base) + lol_game.hd(lol_base)
+        if fn in lol_files
+    ]
+    if not recs:
         return False
     a = fetch_thumb_hash(art["img"], ctx.cache)
-    b = fetch_thumb_hash(rec["url"], ctx.cache)
-    if a is None or b is None:
+    if a is None:
         return False
-    return hamming(a, b) <= CROSS_GAME_DUPLICATE
+    for rec in recs:
+        b = fetch_thumb_hash(rec["url"], ctx.cache)
+        if b is not None and hamming(a, b) <= CROSS_GAME_DUPLICATE:
+            return True
+    return False
 
 
 def main():
