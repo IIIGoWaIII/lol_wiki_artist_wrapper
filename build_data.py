@@ -15,10 +15,12 @@ deliberately absent -- its sets are League champion skins reusing the same art.
     its best available resolution (HD / oldN_HD files), newest art first.
 5. Writes a compact JSON file consumed by the web app.
 
-Wild Rift additionally drops any entry whose artwork is the same picture as the
-League of Legends original -- those carry no information the LoL tab lacks.
+Every cosmetic the wiki lists is kept, including the Wild Rift skins that reuse
+League artwork. The WR file is a separate upload, usually a different crop, and
+for some skins it is the widest copy on the wiki, so dropping it loses a
+painting the LoL tab does not have.
 
-Usage: python build_data.py [game ...]     (requires Pillow, numpy)
+Usage: python build_data.py [game ...]     (requires Pillow)
 """
 
 from __future__ import annotations
@@ -32,8 +34,7 @@ import urllib.parse
 import urllib.request
 from io import BytesIO
 
-import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image
 
 WIKI = "https://wiki.leagueoflegends.com/en-us"
 API_URL = WIKI + "/api.php"
@@ -48,22 +49,6 @@ DATA_DIR = "data"
 CLUSTER_THRESHOLD = 13
 MATCH_THRESHOLD = 7
 HASH_THUMB_WIDTH = 120
-
-# A Wild Rift splash this close to the League of Legends original is the same
-# artwork and is dropped from the WR catalogue, since the League tab already
-# holds it. The LoL tab displays the _HD file when the wiki has one, and that
-# file is often a different crop of the canonical, so the WR splash is compared
-# against both. No single metric separates same-painting from re-cropped pairs:
-# the dHash distance decays smoothly with no natural gap, and re-cropped pairs
-# can score closer than true duplicates (Jax Original, distinct WR art, sits at
-# dHash 17 while the reported duplicate Hwei Original sits at 20), so a drop
-# needs one of two agreements. 10: measured zero false positives, catches
-# re-uploads and re-scales. 0.70: the blurred-Pearson band boundary, where the
-# same-painting set reaches down and the distinct-painting set reaches up; it
-# catches re-crops the dHash cannot align (Rakan Original scores 0.996 at
-# dHash 25).
-CROSS_GAME_DUPLICATE = 10
-CROSS_GAME_DUPLICATE_CORR = 0.70
 
 UNKNOWN_ARTIST = "Unknown artist"
 
@@ -672,90 +657,9 @@ def hamming(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
-# Blurred-Pearson correlation over scale- and slide-aligned thumbnails. The
-# only measured metric that separates same-painting from re-cropped WR pairs;
-# used by the cross-game duplicate rule. Values run -1..1.
-CORR_SCALES = (0.86, 0.90, 0.92, 0.94, 0.96, 0.98, 1.0, 1.02, 1.04, 1.06, 1.08, 1.10, 1.14)
-CORR_STEP = 2
-CORR_RANGE_FRAC = 0.14
-
-_CORR_THUMBS: dict[str, Image.Image | None] = {}
-
-
-def corr_thumb_img(url: str) -> Image.Image | None:
-    """Small blurred greyscale copy of an image, cached by URL."""
-    if url in _CORR_THUMBS:
-        return _CORR_THUMBS[url]
-    img = None
-    try:
-        data = http_get(thumb_url(url, 240))
-        img = Image.open(BytesIO(data)).convert("L").filter(ImageFilter.GaussianBlur(2))
-    except Exception:  # noqa: BLE001
-        img = None
-    _CORR_THUMBS[url] = img
-    return img
-
-
-def _corr(a: np.ndarray, b: np.ndarray) -> float:
-    a = a.ravel()
-    b = b.ravel()
-    a = a - a.mean()
-    b = b - b.mean()
-    denom = np.sqrt((a * a).sum() * (b * b).sum())
-    if denom == 0:
-        return 0.0
-    return float((a * b).sum() / denom)
-
-
-def best_corr(wr: Image.Image, lol: Image.Image) -> float:
-    """Best Pearson correlation of the WR art against the LoL art across a
-    scale and slide search."""
-    arr_w = np.asarray(wr, dtype=np.float32)
-    best = -1.0
-    wh, ww = arr_w.shape
-    for f in CORR_SCALES:
-        h = round(wh * f)
-        ls = lol.resize((max(8, round(lol.size[0] * h / lol.size[1])), h), Image.Resampling.LANCZOS)
-        arr_l = np.asarray(ls, dtype=np.float32)
-        lh, lw = arr_l.shape
-        ys = range(0, max(1, abs(wh - lh) + int(wh * CORR_RANGE_FRAC)), CORR_STEP)
-        dys = (0,) if wh == lh else [v for y in ys for v in (y, -y)]
-        span_x = abs(ww - lw) // 2 + int(ww * CORR_RANGE_FRAC)
-        xs = range(0, span_x + 1, CORR_STEP)
-        dxs = (0,) if ww == lw else [v for x in xs for v in (x, -x)]
-        for dy in dys:
-            oy = (wh - lh) // 2 + dy
-            if lh <= wh:
-                if oy < 0 or oy + lh > wh:
-                    continue
-                wa = arr_w[oy : oy + lh]
-                la = arr_l
-            else:
-                cy = (-oy) if oy < 0 else 0
-                if cy + wh > lh:
-                    continue
-                wa = arr_w
-                la = arr_l[cy : cy + wh]
-            for dx in dxs:
-                ox = (ww - lw) // 2 + dx
-                if lw <= ww:
-                    if ox < 0 or ox + lw > ww:
-                        continue
-                    c = _corr(wa[:, ox : ox + lw], la)
-                else:
-                    cx = (-ox) if ox < 0 else 0
-                    if cx + ww > lw:
-                        continue
-                    c = _corr(wa, la[:, cx : cx + ww])
-                if c > best:
-                    best = c
-    return best
-
-
 # Cross-game caches, keyed by wiki-visible names, so they are valid for every
 # game and survive from one game's build into the next. League and Wild Rift
-# files sit under the same champion prefix, so one image-index read serves both
-# and the Wild Rift pass can reach the League originals it de-duplicates against.
+# files sit under the same champion prefix, so one image-index read serves both.
 INDEX: dict = {}  # discovery key -> {filename: rec}
 HASHES: dict = {}  # url -> dHash
 HISTORIES: dict = {}  # filename -> [revision, ...]
@@ -1173,16 +1077,6 @@ def load_overrides() -> dict:
         return {}
 
 
-def is_lol_twin(game: Game, base: str) -> bool:
-    """True when a Wild Rift base has a League of Legends counterpart.
-
-    The two games use the same file layout, so the League file is the same base
-    without the _WR suffix. Most Wild Rift skins are exclusive and have no
-    counterpart at all, which is the common case.
-    """
-    return game.key == "wr" and base.endswith("_WR")
-
-
 def build_game(game: Game, overrides: dict) -> dict:
     """Build one game's catalogue and write it to data/<out>."""
     ctx = Ctx(overrides)
@@ -1228,20 +1122,19 @@ def build_game(game: Game, overrides: dict) -> dict:
                 continue
             payload = assemble(game, base, files, ctx)
             if payload:
-                return base, payload
+                return payload
         if depth > 3:
-            return None, None
+            return None
         v = e.info.get("variant")
         if isinstance(v, (int, float)):
             other = lookup.get(e.prefix, {}).get(int(v))
             if other and other != e.skin:
                 return resolve(Entry(e.prefix, e.owner, other, by_skin[e.prefix][other]), depth + 1)
-        return None, None
+        return None
 
     skins = []
     set_counts: dict[str, int] = {}
     missing_img = 0
-    dupes = 0
     prev = None
     done = 0
     for e in entries:
@@ -1250,11 +1143,7 @@ def build_game(game: Game, overrides: dict) -> dict:
             done += 1
             if done % 5 == 0 or done == 1:
                 print(f"  {game.unit[:-1].lower()} {done}/{len(owners)}: {e.owner}", flush=True)
-        base, art = resolve(e)
-        if base and art and is_lol_twin(game, base):
-            if drop_as_lol_duplicate(game, e, base, art, ctx):
-                dupes += 1
-                continue
+        art = resolve(e)
         rec = {
             "ch": e.owner,
             "s": e.skin,
@@ -1295,58 +1184,18 @@ def build_game(game: Game, overrides: dict) -> dict:
         "missingImage": missing_img,
         "sets": sets,
     }
-    if dupes:
-        meta["droppedAsLoLDuplicate"] = dupes
 
     os.makedirs(DATA_DIR, exist_ok=True)
     path = os.path.join(DATA_DIR, game.out)
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"meta": meta, "skins": skins}, f, ensure_ascii=False, separators=(",", ":"))
 
-    extra = f", {dupes} dropped as League duplicates" if dupes else ""
-    print(f"wrote {path}: {len(skins)} entries, {len(sets)} sets, {missing_img} without image{extra}")
+    print(f"wrote {path}: {len(skins)} entries, {len(sets)} sets, {missing_img} without image")
     if ctx.report:
         print(f"multi-art cosmetics ({len(ctx.report)}):")
         for line in ctx.report:
             print("  " + line)
     return {"meta": meta, "skins": skins}
-
-
-def drop_as_lol_duplicate(game: Game, e: Entry, base: str, art: dict, ctx: Ctx) -> bool:
-    """True when this Wild Rift splash is the same picture as the League original.
-
-    Wild Rift ports many League skins unchanged, and those files are already in
-    the LoL catalogue at higher resolution, so keeping them would just show the
-    same painting twice. The LoL tab displays the _HD file when the wiki has
-    one, and HD is often a different crop of the canonical file, so both are
-    compared. No single metric separates same-painting from re-cropped pairs,
-    so the drop needs one of two agreements: a dHash distance of 10 or less, or
-    a blurred correlation of 0.70 or more.
-    """
-    lol_game = GAMES["lol"]
-    lol_base = base[: -len(game.suffix)]
-    lol_files = index_for(ctx, champ_prefix(e.prefix))
-    recs = [
-        lol_files[fn]
-        for fn in lol_game.canons(lol_base) + lol_game.hd(lol_base)
-        if fn in lol_files
-    ]
-    if not recs:
-        return False
-    a = fetch_thumb_hash(art["img"], ctx.cache)
-    if a is not None:
-        for rec in recs:
-            b = fetch_thumb_hash(rec["url"], ctx.cache)
-            if b is not None and hamming(a, b) <= CROSS_GAME_DUPLICATE:
-                return True
-    wr_img = corr_thumb_img(art["img"])
-    if wr_img is None:
-        return False
-    for rec in recs:
-        lol_img = corr_thumb_img(rec["url"])
-        if lol_img is not None and best_corr(wr_img, lol_img) >= CROSS_GAME_DUPLICATE_CORR:
-            return True
-    return False
 
 
 def main():

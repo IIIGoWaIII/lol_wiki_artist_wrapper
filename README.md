@@ -51,11 +51,16 @@ Outputs one file per game, each with its own `meta.aspect` used by the frontend:
 | Wild Rift | `Module:SkinDataWR/data` | `data/skins-wr.json` |
 | Legends of Runeterra | `Module:LoRCosmetics/skins` + `Module:LoRData/data` | `data/skins-lor.json` |
 
-### Wild Rift deduplication
+### Wild Rift and League artwork overlap
 
-Wild Rift ports many League skins unchanged, which would show the same painting in two tabs. A WR splash is compared against its same-named League original's canonical file *and* its `_HD` file — the one the LoL tab actually displays, and often a different crop of the canonical — and dropped when either comparison says the same picture: a dHash distance of 10 or less (`CROSS_GAME_DUPLICATE`), or a blurred correlation of 0.70 or more (`CROSS_GAME_DUPLICATE_CORR`). No single metric is enough: the dHash distances decay smoothly with no natural gap and re-cropped pairs can score closer than true duplicates — Jax Original (distinct WR art) sits at dHash 17 while the reported duplicate Hwei Original sits at 20, so no flat dHash cut separates them; the correlation does (0.34 vs 0.84) and it also catches re-crops the dHash cannot align (Rakan Original scores 0.996 at dHash 25). 0.70 is the measured band boundary where the same-painting set reaches down and the distinct-painting set reaches up. Champion lists and every WR-exclusive skin (no same-named League counterpart) are unaffected.
+Wild Rift ports many League skins, so 667 of the 1073 WR cosmetics share a champion and skin name with a League skin. All of them are kept, for two reasons measured against the wiki:
 
-Optional per-skin override in `data/artwork_overrides.json` (keyed by canonical file base, e.g. `"Xin_Zhao_OriginalSkin"`) forces which revisions to keep by date — either a plain list or `{"keep": [...]}`.
+- The files are never identical. No WR/LoL pair shares a sha1, so each port is its own upload and usually a different crop or colour grade. A WR splash is a separate piece of work rather than a copy of the League one.
+- For 18 skins the WR file is the widest image that exists. Nocturne Original is 10000px in Wild Rift against 6000px in League, Riven Valiant Sword 8000 against 4000, Jhin PROJECT 7000 against a 1215px League file. Dropping those loses the only high-resolution copy.
+
+A previous build dropped them by comparing images, using a blurred-correlation threshold of 0.70. Measured over the pairs, the same-painting scores reached down to 0.71 and the different-painting scores reached up to 0.70, so the bands overlapped with no clean cut in between and the threshold was a judgment call. It also hid roughly 100 WR splashes that exist nowhere else, among them the 15 champions whose base artwork Wild Rift re-shot for itself: Jax, Leona, Mel, Nautilus, Nidalee, Norra, Rek'Sai, Shyvana, Soraka, Sylas, Teemo, Thresh, Viego, Xin Zhao and Yunara.
+
+Optional per-skin override in `data/artwork_overrides.json` (keyed by canonical file base, e.g. `"Xin_Zhao_OriginalSkin"`) forces which revisions to keep by date, either a plain list or `{"keep": [...]}`.
 
 ## Layout
 
