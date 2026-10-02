@@ -524,8 +524,6 @@
   const lbImg = $("lbImg");
   function magUpdate(e) {
     if (!lbDown) return;
-    const wrapEl = $("lbImgWrap");
-    const wrap = wrapEl.getBoundingClientRect();
     const box = lbImg.getBoundingClientRect();
     const mx = e.clientX - box.left;
     const my = e.clientY - box.top;
@@ -540,8 +538,8 @@
     lbLensImg.style.height = (box.height * magZoom) + "px";
     lbLensImg.style.left = (MAG_SIZE / 2 - offX) + "px";
     lbLensImg.style.top = (MAG_SIZE / 2 - offY) + "px";
-    lbLens.style.left = (e.clientX - wrap.left - MAG_SIZE / 2 + wrapEl.scrollLeft) + "px";
-    lbLens.style.top = (e.clientY - wrap.top - MAG_SIZE / 2 + wrapEl.scrollTop) + "px";
+    lbLens.style.left = (e.clientX - MAG_SIZE / 2) + "px";
+    lbLens.style.top = (e.clientY - MAG_SIZE / 2) + "px";
   }
   lbImg.addEventListener("mousedown", (e) => {
     if (lb.hidden) return;

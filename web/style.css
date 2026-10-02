@@ -389,7 +389,7 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   box-shadow: 0 10px 60px rgba(0, 0, 0, 0.7);
 }
 #lbLens {
-  position: absolute;
+  position: fixed;
   border: 2px solid rgba(180, 180, 180, 0.7);
   border-radius: 50%;
   overflow: hidden;
