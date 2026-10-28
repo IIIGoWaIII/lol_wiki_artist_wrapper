@@ -9,6 +9,7 @@ Usage: python server.py [--port 8000] [--host 0.0.0.0]
 """
 
 import argparse
+import gzip
 import socket
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,6 +21,18 @@ DATA_DIR = ROOT / "data"
 # The only data files the page may fetch. An allowlist rather than a path check,
 # so the build inputs (artwork_overrides.json) stay server-side.
 DATA_FILES = ("skins.json", "skins-wr.json", "skins-lor.json")
+
+MIME = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+}
+# Text types are compressed on the fly: skins.json drops from 1.2 MB to 160 KB.
+COMPRESSIBLE = {"text/html", "text/javascript", "text/css", "application/json", "image/svg+xml"}
+MIN_GZIP = 1024
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -46,7 +59,7 @@ class Handler(BaseHTTPRequestHandler):
     def _send_headers(self, code=200, ctype="text/html", length=None, extra=None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", "no-cache")
         self.send_header("Access-Control-Allow-Origin", "*")
         if length is not None:
             self.send_header("Content-Length", str(length))
@@ -55,9 +68,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _not_found(self, head):
-        self._send_headers(404, "text/plain")
+        body = b"not found"
+        self._send_headers(404, "text/plain; charset=utf-8", len(body))
         if not head:
-            self.wfile.write(b"not found")
+            self.wfile.write(body)
 
     def _static(self, root: Path, rel: str, allowed=None, head=False):
         rel = rel.lstrip("/")
@@ -75,15 +89,24 @@ class Handler(BaseHTTPRequestHandler):
         if not path.is_file():
             self._not_found(head)
             return
-        ct = {
-            ".html": "text/html; charset=utf-8",
-            ".js": "text/javascript; charset=utf-8",
-            ".css": "text/css; charset=utf-8",
-            ".json": "application/json; charset=utf-8",
-            ".svg": "image/svg+xml",
-        }.get(path.suffix.lower(), "application/octet-stream")
+
+        ct = MIME.get(path.suffix.lower(), "application/octet-stream")
+        stat = path.stat()
+        etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+        extra = {"ETag": etag, "Vary": "Accept-Encoding"}
+        if etag in self.headers.get("If-None-Match", ""):
+            self._send_headers(304, ct, extra=extra)
+            return
+
         data = path.read_bytes()
-        self._send_headers(200, ct, len(data))
+        if (
+            len(data) >= MIN_GZIP
+            and ct.split(";")[0] in COMPRESSIBLE
+            and "gzip" in self.headers.get("Accept-Encoding", "")
+        ):
+            data = gzip.compress(data, compresslevel=6)
+            extra["Content-Encoding"] = "gzip"
+        self._send_headers(200, ct, len(data), extra)
         if not head:
             self.wfile.write(data)
 
