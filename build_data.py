@@ -41,6 +41,9 @@ API_URL = WIKI + "/api.php"
 USER_AGENT = "lol-wiki-reference-wrapper/1.0 (local artist tool)"
 OVERRIDES_PATH = "data/artwork_overrides.json"
 DATA_DIR = "data"
+# dHash results keyed by image URL. Persisted so a rebuild only fetches new
+# revisions instead of thousands of thumbnails it already hashed yesterday.
+HASH_CACHE_PATH = ".cache/hashes.json"
 
 # Perceptual-hash settings (0-64 bits hamming distance).
 # CLUSTER_THRESHOLD: revisions within this distance count as the same artwork.
@@ -1077,6 +1080,25 @@ def load_overrides() -> dict:
         return {}
 
 
+def load_hash_cache() -> dict:
+    try:
+        with open(HASH_CACHE_PATH, encoding="utf-8") as f:
+            raw = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    return {url: int(h) for url, h in raw.items()}
+
+
+def save_hash_cache(hashes: dict) -> None:
+    """Write the successful hashes. Failures are dropped so the next run retries them."""
+    keep = {url: h for url, h in hashes.items() if h is not None}
+    os.makedirs(os.path.dirname(HASH_CACHE_PATH), exist_ok=True)
+    tmp = HASH_CACHE_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(keep, f, separators=(",", ":"))
+    os.replace(tmp, HASH_CACHE_PATH)
+
+
 def build_game(game: Game, overrides: dict) -> dict:
     """Build one game's catalogue and write it to data/<out>."""
     ctx = Ctx(overrides)
@@ -1182,11 +1204,27 @@ def build_game(game: Game, overrides: dict) -> dict:
         "ownerCount": len(owners),
         "skinCount": len(skins),
         "missingImage": missing_img,
-        "sets": sets,
+        # Plain lists, not the (name, count) tuples, so comparing against the
+        # previously written JSON below sees identical structures.
+        "sets": [[name, count] for name, count in sets],
     }
 
     os.makedirs(DATA_DIR, exist_ok=True)
     path = os.path.join(DATA_DIR, game.out)
+    # Keep the previous generation date when nothing but the date changed, so the
+    # daily workflow only commits when the wiki actually moved.
+    try:
+        with open(path, encoding="utf-8") as f:
+            old = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        old = None
+    if old and old.get("meta", {}).get("gen"):
+        same = old.get("skins") == skins and {
+            k: v for k, v in old["meta"].items() if k != "gen"
+        } == {k: v for k, v in meta.items() if k != "gen"}
+        if same:
+            meta["gen"] = old["meta"]["gen"]
+
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"meta": meta, "skins": skins}, f, ensure_ascii=False, separators=(",", ":"))
 
@@ -1202,9 +1240,11 @@ def main():
     keys = sys.argv[1:] or GAME_ORDER
     games = [get_game(k) for k in keys]
     overrides = load_overrides()
-    print(f"overrides loaded: {len(overrides)}")
+    HASHES.update(load_hash_cache())
+    print(f"overrides loaded: {len(overrides)}, hashes cached: {len(HASHES)}")
     for game in games:
         build_game(game, overrides)
+        save_hash_cache(HASHES)
 
 
 if __name__ == "__main__":

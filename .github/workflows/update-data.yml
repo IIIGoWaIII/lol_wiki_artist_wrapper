@@ -7,8 +7,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
   group: wiki-data
@@ -17,8 +15,6 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    outputs:
-      changed: ${{ steps.push.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
 
@@ -27,18 +23,27 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Hashes of art the build has already seen. Without it every run re-downloads
+      # about 4700 thumbnails just to compute the same dHash values again.
+      - name: Restore dHash cache
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: dhash-${{ github.run_id }}
+          restore-keys: dhash-
+
       - name: Install Pillow
         run: pip install Pillow
 
       - name: Build catalogues
         run: python build_data.py
 
+      # The push below triggers the Pages workflow, which assembles and deploys
+      # the site. Deploying here as well would race with it.
       - name: Commit and push if changed
-        id: push
         run: |
           if git diff --quiet -- data/skins.json data/skins-wr.json data/skins-lor.json; then
             echo "No changes to the skin catalogues"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
@@ -47,30 +52,3 @@ jobs:
           git commit -m "chore: refresh wiki skin data ($(date +%Y-%m-%d))"
           git pull --rebase origin main
           git push origin main
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-
-  build:
-    needs: refresh
-    if: needs.refresh.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-      - name: Assemble site
-        run: mkdir -p _site && cp -r web/* _site/ && cp -r data _site/
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
-
-  deploy:
-    needs: build
-    if: needs.refresh.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
