@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 .env
-server.log
-server.err
+*.log
+*.err
 server.pid
+.cache/
+data/wr_dupe_analysis*.json
