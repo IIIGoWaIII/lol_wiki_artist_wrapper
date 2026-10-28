@@ -11,10 +11,11 @@ Covers three games, one tab each: **League of Legends**, **Wild Rift** and **Leg
   - **Champions** — grid of champion avatars (alphabetical).
   - **Themes** — grid of theme-representative splashes.
   - **Artists** — splash artists.
-- Free-text search across champion, skin, theme and artist names.
-- Sort by release date, champion or price.
+- Sort by release date or champion, newest or oldest first.
 - High-definition splashes (up to 6000x3500+) with resolution shown on every card and in the detail view.
 - **Other versions** listed in the side panel for reworked/older splashes (e.g. pre-rework `_old`/`_Unused` art) — click one to load it into the main view.
+- Shareable links: `?game=wr&champ=Jinx&skin=Project` opens that skin directly. The lightbox also keeps the URL in sync as you browse.
+- Keyboard: Tab to a card, Enter or Space opens it, arrow keys step through the gallery, Esc closes.
 - Each game is cropped to its own native artwork ratio, so Wild Rift and Runeterra card art are not cut to League's 1215x717.
 
 ## Run
@@ -43,6 +44,8 @@ python build_data.py              # all three games
 python build_data.py wr           # just Wild Rift (also: lol, lor)
 ```
 
+Computed dHashes are kept in `.cache/hashes.json`, keyed by image URL, so a rebuild only hashes art it has not seen. Delete the file to force a full recompute. The CI workflow caches the same directory between daily runs. A catalogue's `meta.gen` date only moves when its content changes, so the daily job commits only when the wiki actually changed.
+
 Outputs one file per game, each with its own `meta.aspect` used by the frontend:
 
 | Game | Wiki source | Output |
@@ -66,10 +69,11 @@ Optional per-skin override in `data/artwork_overrides.json` (keyed by canonical 
 
 ```
 build_data.py   fetch + parse + verify -> data/skins{,-wr,-lor}.json
-server.py       static server (local browsing)
+server.py       static server (local browsing), gzip + ETag
 web/            index.html, style.css, app.js (no build step, vanilla JS)
 data/           generated catalogues, one JSON per game
-.github/        GitHub Actions workflow that deploys web/ + data/ to Pages
+tools/          one-off wiki analysis scripts (not part of the build)
+.github/        CI: daily data refresh, Pages deploy on push
 ```
 
 ## Notes
@@ -78,5 +82,5 @@ data/           generated catalogues, one JSON per game
 - Wild Rift uses the same scheme with a `_WR` suffix, but uploaded its first champions as `.png` and later switched to `.jpg`, so both extensions are probed.
 - Runeterra files are named by card code (`01DE012_Rugged-HD-full.jpg`). A card's files also cover its star levels (`T1`-`T8`) and its other cosmetics, so only the `-alt` family is treated as alternate art of the same cosmetic.
 - Variant/prestige skins reuse their base skin's art.
-- Images are hot-linked from the wiki; HD originals are up to 6000px+ wide, grid thumbs are 1200px HD.
+- Images are hot-linked from the wiki; HD originals are up to 6000px+ wide. Grid and sidebar thumbnails request the 420px variant, the lightbox requests 1200px.
 - Skins with no artwork on the wiki (mostly unreleased `Upcoming` entries) are kept in the catalogue but show a placeholder. League currently has none; Wild Rift has a handful. Each catalogue's `meta.missingImage` holds the current count.

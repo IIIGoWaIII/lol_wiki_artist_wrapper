@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Filterable gallery of League of Legends, Wild Rift and Legends of Runeterra splash art, with full-resolution originals and older artwork versions.">
 <title>LoL Splash Reference</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -71,11 +73,11 @@
   </div>
 </div>
 
-<div id="lb" hidden role="dialog" aria-modal="true" aria-label="Skin detail">
+<div id="lb" hidden role="dialog" aria-modal="true" aria-labelledby="lbName">
   <div id="lbStage">
     <button id="lbClose" title="Close (Esc)">&times;</button>
     <button id="lbPrev" title="Previous (&larr;)">&#8249;</button>
-    <div id="lbImgWrap"><div id="lbLoadBar"><div id="lbLoadBarFill"></div></div><img id="lbImg" alt="Splash art" draggable="false"><div id="lbLens"><img id="lbLensImg" alt=""></div></div>
+    <div id="lbImgWrap"><div id="lbLoadBar"></div><img id="lbImg" alt="Splash art" draggable="false"><div id="lbNoArt" hidden>No artwork on the wiki for this skin.</div><div id="lbLens"><img id="lbLensImg" alt=""></div></div>
     <button id="lbNext" title="Next (&rarr;)">&#8250;</button>
   </div>
   <aside id="lbMeta">
@@ -90,7 +92,7 @@
   </aside>
 </div>
 
-<div id="toast" hidden></div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
 
 <script src="app.js"></script>
 </body>

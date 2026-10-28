@@ -13,7 +13,6 @@
   --gold: #c8aa6e;
   --gold2: #f0e6d2;
   --cyan: #0ac8b9;
-  --danger: #e05d5d;
   --grad: linear-gradient(180deg, #0a2432 0%, #010a13 100%);
 }
 
@@ -258,12 +257,16 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   .card .meta { padding: 6px 8px; }
   .card .name { font-size: 12px; }
   .card .sub { font-size: 10px; }
-  .card .code { top: 4px; left: 4px; }
   .card .res { left: 4px; bottom: 4px; }
 }
 
 .card {
   position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  font: inherit;
+  text-align: left;
   border-radius: 10px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -276,6 +279,10 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   border-color: var(--gold);
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
 }
+.card:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
 .card img {
   display: block;
   width: 100%;
@@ -283,13 +290,26 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   object-fit: cover;
   background: #06131c;
 }
+.card .noart {
+  display: grid;
+  place-items: center;
+  aspect-ratio: var(--ar);
+  padding: 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--dim);
+  background: repeating-linear-gradient(135deg, #06131c, #06131c 12px, #081a25 12px, #081a25 24px);
+}
 .card .imgwrap {
   position: relative;
+  display: block;
 }
 .card .meta {
+  display: block;
   padding: 8px 10px;
 }
 .card .name {
+  display: block;
   font-size: 13px;
   font-weight: 600;
   color: var(--gold2);
@@ -298,23 +318,13 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   text-overflow: ellipsis;
 }
 .card .sub {
+  display: block;
   font-size: 11px;
   color: var(--dim);
   margin-top: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.card .code {
-  position: absolute;
-  top: 6px; left: 6px;
-  padding: 2px 7px;
-  font-size: 10px;
-  border-radius: 4px;
-  background: rgba(1, 10, 19, 0.72);
-  color: var(--gold);
-  border: 1px solid var(--line);
-  letter-spacing: 0.4px;
 }
 .card .res {
   position: absolute;
@@ -326,6 +336,10 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   color: var(--cyan);
   border: 1px solid var(--line);
   letter-spacing: 0.3px;
+}
+/* Scroll trigger for the next batch, kept outside the grid so it never takes a cell. */
+#sentinel {
+  height: 1px;
 }
 #more, #empty {
   display: block;
@@ -435,8 +449,19 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
 #lbInfo { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; font-size: 13px; }
 #lbInfo dt { color: var(--dim); white-space: nowrap; }
 #lbInfo dd { margin: 0; color: var(--text); }
-#lbInfo a { color: var(--cyan); text-decoration: none; }
-#lbInfo a:hover { text-decoration: underline; }
+
+#lbNoArt {
+  display: grid;
+  place-items: center;
+  width: min(620px, 80vw);
+  aspect-ratio: var(--ar);
+  padding: 16px;
+  color: var(--dim);
+  font-size: 14px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: #06131c;
+}
 
 #lbVers { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 12px; }
 #lbVers h3 { margin: 0 0 8px; color: var(--dim); font-size: 12px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
@@ -551,5 +576,5 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   .pctl { flex-wrap: wrap; }
   .pctl .psearch { min-width: 100%; }
   .pgrid { grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 6px; padding: 8px; }
-  #pgThemes .pgrid, .pgrid.pills { grid-template-columns: 1fr; }
+  #pgThemes, .pgrid.pills { grid-template-columns: 1fr; }
 }

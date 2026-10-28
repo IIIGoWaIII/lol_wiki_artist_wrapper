@@ -22,7 +22,6 @@
 
   const $ = (id) => document.getElementById(id);
   const grid = $("grid");
-  const elSearch = $("search") || { value: "" };
   const empty = $("empty");
   const more = $("more");
   const lb = $("lb");
@@ -48,16 +47,18 @@
   const yearOf = (rec) => (rec._date && /^\d{4}/.test(rec._date) ? parseInt(rec._date.slice(0, 4), 10) : null);
 
   function precompute(rec, i) {
-    const set = rec.set || [];
     rec._i = i;
     rec._label = skinLabel(rec);
     const rOk = rec.r && /^\d{4}-\d{2}-\d{2}$/.test(rec.r);
     rec._date = rec.d || (rOk ? rec.r : null) || null;
     rec._year = yearOf(rec);
-    rec._search = [rec.ch, rec.s, rec.fmt, rec._label, set.join(" "), (rec.art || []).join(" ")]
-      .filter(Boolean).join(" ").toLowerCase();
     return rec;
   }
+
+  // The wiki renders any thumb width on demand. Grid cards and version buttons
+  // are a few hundred pixels wide, so ask for the 420px variant rather than the
+  // 1200px one the catalogue stores for the lightbox.
+  const thumbAt = (url, width) => (url ? url.replace(/\/\d+px-/, `/${width}px-`) : null);
 
   async function fetchGame(key) {
     if (cache.has(key)) return cache.get(key);
@@ -86,7 +87,7 @@
   let loadToken = 0;
 
   async function load(key) {
-    if (!(key in GAMES)) return;
+    if (!Object.hasOwn(GAMES, key)) return;
     // Two quick tab clicks resolve out of order; only the last one may paint.
     const token = ++loadToken;
     const d = await fetchGame(key);
@@ -172,17 +173,21 @@
     cb.type = "checkbox";
     cb.value = it.name;
     cb.checked = sel.has(it.name);
-    const img = document.createElement("img");
-    img.loading = "lazy";
-    img.src = it.rec.t || it.rec.img;
-    img.alt = it.name;
     const name = document.createElement("span");
     name.className = "tn";
     name.textContent = it.name;
     const tick = document.createElement("span");
     tick.className = "tk";
     tick.textContent = "\u2713";
-    label.append(cb, img, name, tick);
+    label.append(cb, name, tick);
+    const src = thumbAt(it.rec.t || it.rec.img, 420);
+    if (src) {
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.src = src;
+      img.alt = it.name;
+      label.insertBefore(img, name);
+    }
     return label;
   }
 
@@ -204,20 +209,13 @@
 
   function updateSel(kind) {
     const pgrid = $(`pg${cap(kind)}`);
-    const prev = state.sel[kind];
-    if (prev) {
-      const next = new Set(prev);
-      pgrid.querySelectorAll("input").forEach((i) => {
-        if (i.checked) next.add(i.value);
-        else next.delete(i.value);
-      });
-      state.sel[kind] = next;
-    } else {
-      const sel = new Set();
-      pgrid.querySelectorAll("input:checked").forEach((i) => sel.add(i.value));
-      state.sel[kind] = sel;
-    }
-    $(`sc${cap(kind)}`).textContent = state.sel[kind].size ? `(${state.sel[kind].size})` : "";
+    const next = new Set(state.sel[kind]);
+    pgrid.querySelectorAll("input").forEach((i) => {
+      if (i.checked) next.add(i.value);
+      else next.delete(i.value);
+    });
+    state.sel[kind] = next;
+    $(`sc${cap(kind)}`).textContent = next.size ? `(${next.size})` : "";
     apply();
   }
 
@@ -247,13 +245,11 @@
   document.querySelectorAll(".pnone").forEach((b) => b.addEventListener("click", () => panelNone(b.dataset.kind)));
 
   function apply() {
-    const q = elSearch.value.trim().toLowerCase();
     const year = $("fYear").value;
     const sort = $("fSort").value;
     const sel = state.sel;
 
     let list = state.skins.filter((s) => {
-      if (q && !s._search.includes(q)) return false;
       if (sel.champs.size && !sel.champs.has(s.ch)) return false;
       if (sel.themes.size && !(s.set || []).some((t) => sel.themes.has(t))) return false;
       if (sel.artists.size && !(s.art || []).some((a) => sel.artists.has(a))) return false;
@@ -299,7 +295,9 @@
     if (!sentinelEl) {
       sentinelEl = document.createElement("div");
       sentinelEl.id = "sentinel";
-      grid.appendChild(sentinelEl);
+      // A sibling of the grid, not a grid item: inside the grid it would take a
+      // cell and push the next batch of cards out of alignment.
+      grid.after(sentinelEl);
       new IntersectionObserver((es) => { if (es[0].isIntersecting && !more.hidden) renderStep(); }, { rootMargin: "900px" })
         .observe(sentinelEl);
     }
@@ -311,31 +309,40 @@
   }
 
   function makeCard(rec, idx) {
-    const card = document.createElement("div");
+    const card = document.createElement("button");
+    card.type = "button";
     card.className = "card";
     card.dataset.idx = idx;
+    card.setAttribute("aria-label", `${rec.ch} - ${rec._label}`);
 
-    const imgWrap = document.createElement("div");
+    const imgWrap = document.createElement("span");
     imgWrap.className = "imgwrap";
     if (resText(rec)) {
-      const res = document.createElement("div");
+      const res = document.createElement("span");
       res.className = "res";
       res.textContent = resText(rec);
       imgWrap.appendChild(res);
     }
-    const img = document.createElement("img");
-    img.loading = "lazy";
-    img.src = rec.t || rec.img;
-    img.alt = `${rec._label} — ${rec.ch} splash art`;
-    imgWrap.appendChild(img);
+    if (rec.img) {
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.src = thumbAt(rec.t || rec.img, 420);
+      img.alt = `${rec._label} — ${rec.ch} splash art`;
+      imgWrap.appendChild(img);
+    } else {
+      const ph = document.createElement("span");
+      ph.className = "noart";
+      ph.textContent = "No artwork on the wiki";
+      imgWrap.appendChild(ph);
+    }
     card.appendChild(imgWrap);
 
-    const meta = document.createElement("div");
+    const meta = document.createElement("span");
     meta.className = "meta";
-    const name = document.createElement("div");
+    const name = document.createElement("span");
     name.className = "name";
     name.textContent = `${rec.ch} - ${rec._label}`;
-    const sub = document.createElement("div");
+    const sub = document.createElement("span");
     sub.className = "sub";
     sub.textContent = [(rec.set || []).join(", ") || "", (rec.art || [])[0] || ""].filter(Boolean).join(" · ");
     meta.append(name, sub);
@@ -357,11 +364,23 @@
   function loadLbImage(rec) {
     const img = $("lbImg");
     const bar = $("lbLoadBar");
+    const noArt = $("lbNoArt");
     bar.classList.remove("done");
     curFull = rec.img;
 
     img.onload = null;
     img.onerror = null;
+
+    if (!rec.img) {
+      bar.classList.remove("active");
+      img.hidden = true;
+      img.removeAttribute("src");
+      lbLensImg.removeAttribute("src");
+      noArt.hidden = false;
+      return;
+    }
+    img.hidden = false;
+    noArt.hidden = true;
 
     const full = document.createElement("img");
     full.src = rec.img;
@@ -373,14 +392,19 @@
     };
     full.onerror = () => bar.classList.remove("active");
 
-    img.src = rec.t || rec.img;
+    img.src = thumbAt(rec.t || rec.img, 1200);
     bar.classList.add("active");
   }
+
+  // Images open in place and leave the URL alone; stepping keeps lightbox focus.
+  let lastFocus = null;
 
   function openLightbox(idx) {
     state.lbIdx = idx;
     const rec = state.filtered[idx];
     const label = rec._label;
+    const wasHidden = lb.hidden;
+    if (wasHidden) lastFocus = document.activeElement;
 
     $("lbName").textContent = `${rec.ch} - ${label}`;
     $("lbChamp").textContent = rec.ch;
@@ -404,6 +428,9 @@
       info.append(dt, dd);
     }
 
+    // The side panel always starts on the newest artwork, so the highlighted
+    // version button and the loaded image cannot drift apart.
+    rec._curVer = 0;
     loadLbImage(rec);
     $("lbImgWrap").scrollTop = 0;
     $("lbStage").scrollTop = 0;
@@ -412,6 +439,8 @@
 
     lb.hidden = false;
     document.body.style.overflow = "hidden";
+    writeUrl(rec.ch, rec.s);
+    if (wasHidden) $("lbClose").focus();
   }
 
   function renderVersions(rec) {
@@ -423,17 +452,21 @@
     vers.forEach((v, i) => {
       const b = document.createElement("button");
       b.className = "vbtn";
-      if (i === (rec._curVer || 0)) b.classList.add("on");
+      if (i === rec._curVer) b.classList.add("on");
       b.title = v.l;
-      const im = document.createElement("img");
-      im.loading = "lazy";
-      im.src = v.t || v.img;
-      im.alt = v.l;
+      const src = thumbAt(v.t || v.img, 420);
+      if (src) {
+        const im = document.createElement("img");
+        im.loading = "lazy";
+        im.src = src;
+        im.alt = v.l;
+        b.append(im);
+      }
       const sp = document.createElement("span");
       sp.textContent = v.l;
       const d = document.createElement("i");
       d.textContent = v.d || "";
-      b.append(im, sp, d);
+      b.append(sp, d);
       b.addEventListener("click", () => setVersion(rec, i, b));
       box.appendChild(b);
     });
@@ -456,15 +489,59 @@
   }
 
   function closeLightbox() {
+    if (state.lbIdx < 0) return;
     lb.hidden = true;
     document.body.style.overflow = "";
     state.lbIdx = -1;
+    writeUrl(null);
+    if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
+    lastFocus = null;
   }
 
   function step(delta) {
     const nxt = (state.lbIdx + delta + state.filtered.length) % state.filtered.length;
     openLightbox(nxt);
   }
+
+  // --- URL state -------------------------------------------------------------
+  // A shared link opens the same game and skin: ?game=lor&champ=Jinx&skin=Project
+  function readUrl() {
+    const p = new URLSearchParams(location.search);
+    const game = p.get("game");
+    return {
+      game: game && Object.hasOwn(GAMES, game) ? game : null,
+      champ: p.get("champ"),
+      skin: p.get("skin"),
+    };
+  }
+
+  function writeUrl(champ, skin) {
+    const p = new URLSearchParams(location.search);
+    p.set("game", state.game || DEFAULT_GAME);
+    if (champ && skin) {
+      p.set("champ", champ);
+      p.set("skin", skin);
+    } else {
+      p.delete("champ");
+      p.delete("skin");
+    }
+    history.replaceState(null, "", `${location.pathname}?${p}`);
+  }
+
+  function syncUrl() {
+    const u = readUrl();
+    if (u.game && u.game !== state.game) {
+      load(u.game).catch((e) => toast("Failed to load data: " + e.message));
+      return;
+    }
+    const idx = u.champ && u.skin
+      ? state.filtered.findIndex((s) => s.ch === u.champ && s.s === u.skin)
+      : -1;
+    if (idx >= 0) openLightbox(idx);
+    else closeLightbox();
+  }
+
+  window.addEventListener("popstate", syncUrl);
 
   let toastTimer = null;
   function toast(msg) {
@@ -481,15 +558,30 @@
   $("lbNext").addEventListener("click", () => step(1));
   lb.addEventListener("click", (e) => { if (e.target === lb) closeLightbox(); });
 
+  function trapTab(e) {
+    const items = [...lb.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")]
+      .filter((el) => !el.disabled && el.offsetParent !== null);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
   document.addEventListener("keydown", (e) => {
     if (lb.hidden) return;
     if (e.key === "Escape") closeLightbox();
     else if (e.key === "ArrowLeft") step(-1);
     else if (e.key === "ArrowRight") step(1);
+    else if (e.key === "Tab") trapTab(e);
   });
 
   $("clearbtn").addEventListener("click", () => {
-    elSearch.value = "";
     for (const kind of ["champs", "themes", "artists"]) {
       $(`ps${cap(kind)}`).value = "";
     }
@@ -516,7 +608,6 @@
   window.addEventListener("resize", onResize);
   onResize();
 
-  let debounce = null;
   $("fYear").addEventListener("change", apply);
   $("fSort").addEventListener("change", apply);
   more.addEventListener("click", renderStep);
@@ -548,11 +639,13 @@
       return;
     }
     if (e.button !== 0) return;
+    const src = lbImg.getAttribute("src");
+    if (!src) return;
     e.preventDefault();
     lbDown = true;
     lbLens.style.width = MAG_SIZE + "px";
     lbLens.style.height = MAG_SIZE + "px";
-    lbLensImg.src = lbImg.src;
+    lbLensImg.src = src;
     magUpdate(e);
     lbLens.classList.add("on");
   });
@@ -579,8 +672,13 @@
   $("gametabs").addEventListener("click", (e) => {
     const tab = e.target.closest(".gtab");
     if (!tab || tab.dataset.game === state.game) return;
-    load(tab.dataset.game).catch((err) => toast("Failed to load data: " + err.message));
+    load(tab.dataset.game)
+      .then(() => writeUrl(null))
+      .catch((err) => toast("Failed to load data: " + err.message));
   });
 
-  load(DEFAULT_GAME).catch((e) => { toast("Failed to load data: " + e.message); });
+  const startGame = readUrl().game || DEFAULT_GAME;
+  load(startGame)
+    .then(syncUrl)
+    .catch((e) => { toast("Failed to load data: " + e.message); });
 })();
