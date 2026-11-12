@@ -103,6 +103,13 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   flex-direction: column;
   gap: 16px;
 }
+/* The panels are rendered into #panels, so the gap has to live here rather
+   than on #filters: otherwise the closed tabs sit flush against each other. */
+#panels {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
 #filters select {
   padding: 8px 10px;
   border-radius: 6px;
