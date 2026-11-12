@@ -14,10 +14,11 @@
 <div class="layout">
   <aside id="sidebar">
     <section id="filters">
+      <button id="clearbtn" title="Clear filters" hidden>Clear</button>
       <details class="fpanel" id="fpChamp" open>
         <summary>Champions<span class="sc" id="scChamps"></span></summary>
         <div class="pctl">
-          <input class="psearch" id="psChamps" placeholder="Search champion name..." type="search">
+          <input class="psearch" id="psChamps" placeholder="Search names, comma separated" type="search">
           <button class="pall" data-kind="champs">Select all</button>
           <button class="pnone" data-kind="champs">Clear</button>
         </div>
@@ -27,7 +28,7 @@
       <details class="fpanel" id="fpTheme">
         <summary>Themes<span class="sc" id="scThemes"></span></summary>
         <div class="pctl">
-          <input class="psearch" id="psThemes" placeholder="Search theme name..." type="search">
+          <input class="psearch" id="psThemes" placeholder="Search names, comma separated" type="search">
           <button class="pall" data-kind="themes">Select all</button>
           <button class="pnone" data-kind="themes">Clear</button>
         </div>
@@ -37,7 +38,7 @@
       <details class="fpanel" id="fpArtist">
         <summary>Artists<span class="sc" id="scArtists"></span></summary>
         <div class="pctl">
-          <input class="psearch" id="psArtists" placeholder="Search artist name..." type="search">
+          <input class="psearch" id="psArtists" placeholder="Search names, comma separated" type="search">
           <button class="pall" data-kind="artists">Select all</button>
           <button class="pnone" data-kind="artists">Clear</button>
         </div>
@@ -53,7 +54,6 @@
           <option value="za">Champion Z&rarr;A</option>
         </select>
       </div>
-      <button id="clearbtn" title="Clear filters">Clear</button>
     </section>
   </aside>
 

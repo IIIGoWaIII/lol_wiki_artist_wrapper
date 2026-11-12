@@ -153,16 +153,22 @@
     renderPanel("artists");
   }
 
+  // Panel searches accept several names at once, separated by commas:
+  // "briar, lux" lists every champion matching either.
+  const searchTokens = (kind) =>
+    $(`ps${cap(kind)}`).value.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
+
   function renderPanel(kind) {
-    const q = $(`ps${cap(kind)}`).value.trim().toLowerCase();
+    const tokens = searchTokens(kind);
     const pgrid = $(`pg${cap(kind)}`);
     pgrid.innerHTML = "";
     const items = state[kind];
     const sel = state.sel[kind];
     for (const it of items) {
-      if (q && !it.name.toLowerCase().includes(q)) continue;
+      if (tokens.length && !tokens.some((t) => it.name.toLowerCase().includes(t))) continue;
       pgrid.appendChild(kind === "artists" ? makePill(it, sel) : makeTile(it, kind, sel));
     }
+    syncClear();
   }
 
   function makeTile(it, kind, sel) {
@@ -236,6 +242,19 @@
     }
   }
 
+  function hasActiveFilters() {
+    const searched = ["champs", "themes", "artists"].some(
+      (k) => state.sel[k].size > 0 || $(`ps${cap(k)}`).value.trim() !== ""
+    );
+    return searched || $("fYear").value !== "" || $("fSort").value !== "new";
+  }
+
+  // The clear button only exists while something is actually filtered, so it
+  // cannot be clicked when there is nothing to reset.
+  function syncClear() {
+    $("clearbtn").hidden = !hasActiveFilters();
+  }
+
   for (const kind of ["champs", "themes", "artists"]) {
     const pgrid = $(`pg${cap(kind)}`);
     pgrid.addEventListener("change", () => updateSel(kind));
@@ -245,6 +264,7 @@
   document.querySelectorAll(".pnone").forEach((b) => b.addEventListener("click", () => panelNone(b.dataset.kind)));
 
   function apply() {
+    syncClear();
     const year = $("fYear").value;
     const sort = $("fSort").value;
     const sel = state.sel;

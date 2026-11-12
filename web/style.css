@@ -122,7 +122,17 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
 }
 .selrow select { min-width: 0; }
 
-#clearbtn { margin-top: 4px; }
+#clearbtn {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  width: 100%;
+  font-weight: 600;
+  color: #ffc2c8;
+  background: #3b1219;
+  border-color: #a63a46;
+}
+#clearbtn:hover { background: #54171f; border-color: #ef6b7a; color: #fff; }
 
 .fpanel {
   border: 1px solid var(--line);
@@ -561,6 +571,7 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   #sidebar.open {
     transform: translateX(0);
   }
+  #clearbtn { top: 56px; }
   body.sbdim #sbOverlay { display: block; }
   #filters { padding-top: 0; }
   #gametabs { padding-left: 66px; padding-right: 10px; }
