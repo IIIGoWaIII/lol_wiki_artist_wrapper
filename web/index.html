@@ -15,35 +15,8 @@
   <aside id="sidebar">
     <section id="filters">
       <button id="clearbtn" title="Clear filters" hidden>Clear</button>
-      <details class="fpanel" id="fpChamp" open>
-        <summary>Champions<span class="sc" id="scChamps"></span></summary>
-        <div class="pctl">
-          <input class="psearch" id="psChamps" placeholder="Search names, comma separated" type="search">
-          <button class="pall" data-kind="champs">Select all</button>
-          <button class="pnone" data-kind="champs">Clear</button>
-        </div>
-        <div class="pgrid" id="pgChamps"></div>
-      </details>
-
-      <details class="fpanel" id="fpTheme">
-        <summary>Themes<span class="sc" id="scThemes"></span></summary>
-        <div class="pctl">
-          <input class="psearch" id="psThemes" placeholder="Search names, comma separated" type="search">
-          <button class="pall" data-kind="themes">Select all</button>
-          <button class="pnone" data-kind="themes">Clear</button>
-        </div>
-        <div class="pgrid" id="pgThemes"></div>
-      </details>
-
-      <details class="fpanel" id="fpArtist">
-        <summary>Artists<span class="sc" id="scArtists"></span></summary>
-        <div class="pctl">
-          <input class="psearch" id="psArtists" placeholder="Search names, comma separated" type="search">
-          <button class="pall" data-kind="artists">Select all</button>
-          <button class="pnone" data-kind="artists">Clear</button>
-        </div>
-        <div class="pgrid pills" id="pgArtists"></div>
-      </details>
+      <!-- Panels are rendered from the catalogue's meta.tagGroups; see app.js. -->
+      <div id="panels"></div>
 
       <div class="selrow">
         <select id="fYear" title="Release year"><option value="">Any year</option></select>

@@ -189,6 +189,10 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
 .pgrid.pills {
   grid-template-columns: 1fr;
 }
+/* Tag values are short words, so they wrap two or three per row. */
+.pgrid.chips {
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+}
 
 .tile {
   position: relative;

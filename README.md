@@ -11,6 +11,7 @@ Covers three games, one tab each: **League of Legends**, **Wild Rift** and **Leg
   - **Champions** — grid of champion avatars (alphabetical).
   - **Themes** — grid of theme-representative splashes.
   - **Artists** — splash artists.
+  - **Vibes, Kind, Species, Gender, Region, Class** — see [Tags](#tags) below. Panels combine as AND, values inside a panel as OR, so *Kind: Monster* + *Vibes: Cute* finds the cute monsters.
 - Sort by release date or champion, newest or oldest first.
 - High-definition splashes (up to 6000x3500+) with resolution shown on every card and in the detail view.
 - **Other versions** listed in the side panel for reworked/older splashes (e.g. pre-rework `_old`/`_Unused` art) — click one to load it into the main view.
@@ -35,7 +36,7 @@ The server also binds 0.0.0.0, so LAN devices can use `http://<your-ip>:8000`, a
 
 ## Regenerate data
 
-Each catalogue is generated from the wiki's Lua tables, the image index (`allimages`), and each file's full revision history. Distinct repaints are detected by perceptual hash (dHash): small iterations of the same artwork are collapsed, so the **other versions** panel shows one copy per real repaint, oldest first, each upgraded to its best available resolution.
+Each catalogue is generated from the wiki's Lua tables, the image index (`allimages`), each file's full revision history, and the champion lore pages behind the [tags](#tags). Distinct repaints are detected by perceptual hash (dHash): small iterations of the same artwork are collapsed, so the **other versions** panel shows one copy per real repaint, oldest first, each upgraded to its best available resolution.
 
 Requires Python with Pillow:
 
@@ -65,10 +66,28 @@ A previous build dropped them by comparing images, using a blurred-correlation t
 
 Optional per-skin override in `data/artwork_overrides.json` (keyed by canonical file base, e.g. `"Xin_Zhao_OriginalSkin"`) forces which revisions to keep by date, either a plain list or `{"keep": [...]}`.
 
+## Tags
+
+The wiki does not tag splash art by subject: a splash file is only categorised by champion, skin line, release season and copyright, and there is no "cute", "female" or "monster" category anywhere on it (`Category:Monsters` is jungle camps). The gallery therefore builds its own filter groups, stored per skin in `tags`:
+
+| Group | Where it comes from | Values |
+| --- | --- | --- |
+| `kind` | coarse grouping of `species` | Human, Humanoid, Yordle, Beast, Monster, Spirit, Construct |
+| `species` | `species` field of the champion's lore page, `Universe:<Champion>` (`{{Champion bio}}`) | Human, Yordle, Voidborn, Darkin, Demon, Aspect Host, ... |
+| `gender` | the lore page's `pronoun` field | Male, Female, Other |
+| `region` | the lore page's `region` field | Ionia, Noxus, Zaun, Demacia, ... |
+| `class` | `Module:ChampionData/data` | Marksman, Mage, Fighter, Tank, Assassin, Support |
+| `vibe` | curated map of skin lines (`VIBES` in `wiki_tags.py`) | Cute, Anime, Dark, Sci-Fi, Fantasy, Oriental, Western, Summer, Holiday, Modern, Music, Esports |
+
+Species, gender, region and class are champion-level, so every skin of a champion inherits them. Vibes are skin-line-level, with a small per-champion fallback (`CHAMP_VIBES`) for Originals and pre-skin-line art. Skins are never silently left out: the build prints any skin line missing from `VIBES`, which is the list to extend when the wiki adds a line.
+
+The bio pages are fetched in batches of 50 titles through the API (four requests for League), and the lore overrides live in `OVERRIDES` next to the tables.
+
 ## Layout
 
 ```
 build_data.py   fetch + parse + verify -> data/skins{,-wr,-lor}.json
+wiki_tags.py    champion lore + skin-line vibes -> the filter tags
 server.py       static server (local browsing), gzip + ETag
 web/            index.html, style.css, app.js (no build step, vanilla JS)
 data/           generated catalogues, one JSON per game
@@ -78,7 +97,7 @@ tools/          one-off wiki analysis scripts (not part of the build)
 
 ## Notes
 
-- League splash file resolution: `Champion_<Skin>Skin.jpg` with spaces/colons/slashes stripped but other punctuation kept (e.g. `Kog'Maw Bee'MawSkin.jpg`, `Gragas Gragas,Esq.Skin.jpg`). The `_HD` variant (e.g. `Tahm_Kench_OriginalSkin_HD.jpg`) is preferred when the wiki has one.
+- League splash file resolution: `Champion_<Skin>Skin.jpg` with spaces/colons/slashes stripped but other punctuation kept (e.g. `Kog'Maw Bee'MawSkin.jpg`, `Gragas Gragas,Esq.Skin.jpg`). The `_HD` variant (e.g. `Tahm_Kench_OriginalSkin_HD.jpg`) is preferred when the wiki has one. Newer HD uploads are `.png` (`Briar_OriginalSkin_HD.png`), so both extensions are probed.
 - Wild Rift uses the same scheme with a `_WR` suffix, but uploaded its first champions as `.png` and later switched to `.jpg`, so both extensions are probed.
 - Runeterra files are named by card code (`01DE012_Rugged-HD-full.jpg`). A card's files also cover its star levels (`T1`-`T8`) and its other cosmetics, so only the `-alt` family is treated as alternate art of the same cosmetic.
 - Variant/prestige skins reuse their base skin's art.

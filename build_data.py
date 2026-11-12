@@ -36,6 +36,8 @@ from io import BytesIO
 
 from PIL import Image
 
+import wiki_tags
+
 WIKI = "https://wiki.leagueoflegends.com/en-us"
 API_URL = WIKI + "/api.php"
 USER_AGENT = "lol-wiki-reference-wrapper/1.0 (local artist tool)"
@@ -343,10 +345,16 @@ class SkinDataGame(Game):
 
     suffix = ""
     skip_marks: tuple = ()
-    # Art extension(s) the wiki uses for this game. Wild Rift uploaded its first
-    # champions as .png and later switched to .jpg, so both have to be probed;
-    # League is .jpg throughout.
+    # Art extension(s) the wiki uses for this game's canonical file. Wild Rift
+    # uploaded its first champions as .png and later switched to .jpg, so both
+    # have to be probed; League canonicals are .jpg throughout.
     exts: tuple = (".jpg",)
+    # The separate `_HD` upload is not tied to the canonical format: the wiki
+    # keeps most of them as .jpg but has uploaded newer ones as .png
+    # (Briar_OriginalSkin_HD.png, Tristana_RainShepherdSkin_HD.png). Probing both
+    # for every game finds those without touching the canonical lookup; a base
+    # that has both formats keeps resolving to the .jpg.
+    hd_exts: tuple = (".jpg", ".png")
 
     def entries(self, raw: str) -> list[Entry]:
         out = []
@@ -373,7 +381,7 @@ class SkinDataGame(Game):
         return [base + ext for ext in self.exts]
 
     def hd(self, base: str) -> list[str]:
-        return [base + "_HD" + ext for ext in self.exts]
+        return [base + "_HD" + ext for ext in self.hd_exts]
 
     def hits(self, files: dict, base: str, e: Entry) -> dict:
         own = set(self.canons(base)) | set(self.hd(base))
@@ -1099,7 +1107,7 @@ def save_hash_cache(hashes: dict) -> None:
     os.replace(tmp, HASH_CACHE_PATH)
 
 
-def build_game(game: Game, overrides: dict) -> dict:
+def build_game(game: Game, overrides: dict, tags: wiki_tags.TagSource) -> dict:
     """Build one game's catalogue and write it to data/<out>."""
     ctx = Ctx(overrides)
     print(f"\n=== {game.label} ===")
@@ -1108,6 +1116,9 @@ def build_game(game: Game, overrides: dict) -> dict:
     entries = game.entries(http_get(f"{WIKI}/{game.module}?action=raw").decode("utf-8"))
     owners = sorted({e.owner for e in entries})
     print(f"{game.unit.lower()} parsed: {len(owners)} ({len(entries)} cosmetics)")
+
+    print("fetching champion tags...")
+    tags.ensure(owners)
 
     print("fetching file histories...")
     wanted = sorted({fn for e in entries for b in game.bases(e) for fn in game.canons(b)})
@@ -1176,6 +1187,7 @@ def build_game(game: Game, overrides: dict) -> dict:
             "r": e.info.get("release"),
             "d": art["d"] if art else None,
             "art": normalize_artist(e.info),
+            "tags": tags.for_skin(e.owner, e.info.get("set")),
             "mu": e.info.get("music"),
             "cr": len(e.info.get("chromas") or {}) if isinstance(e.info.get("chromas"), dict) else 0,
             "mid": e.info.get("id"),
@@ -1207,6 +1219,8 @@ def build_game(game: Game, overrides: dict) -> dict:
         # Plain lists, not the (name, count) tuples, so comparing against the
         # previously written JSON below sees identical structures.
         "sets": [[name, count] for name, count in sets],
+        # The tag vocabulary the sidebar renders; values come from the records.
+        "tagGroups": [list(group) for group in wiki_tags.GROUPS],
     }
 
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -1240,11 +1254,13 @@ def main():
     keys = sys.argv[1:] or GAME_ORDER
     games = [get_game(k) for k in keys]
     overrides = load_overrides()
+    tags = wiki_tags.TagSource(WIKI)
     HASHES.update(load_hash_cache())
     print(f"overrides loaded: {len(overrides)}, hashes cached: {len(HASHES)}")
     for game in games:
-        build_game(game, overrides)
+        build_game(game, overrides, tags)
         save_hash_cache(HASHES)
+    wiki_tags.report_unmapped()
 
 
 if __name__ == "__main__":

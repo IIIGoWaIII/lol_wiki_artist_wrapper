@@ -7,6 +7,13 @@
     wr: "skins-wr.json",
     lor: "skins-lor.json",
   };
+  // Panels every game has, before the tag groups the catalogue declares in
+  // meta.tagGroups. `tiles` panels show artwork, `pills` panels are text.
+  const BASE_PANELS = [
+    { kind: "champs", label: "Champions", tiles: true, open: true },
+    { kind: "themes", label: "Themes", tiles: true },
+    { kind: "artists", label: "Artists", pills: true },
+  ];
   const cache = new Map();
   const state = {
     game: null,
@@ -14,10 +21,9 @@
     filtered: [],
     shown: 0,
     lbIdx: -1,
-    champs: [],
-    themes: [],
-    artists: [],
-    sel: { champs: new Set(), themes: new Set(), artists: new Set() },
+    panels: BASE_PANELS,
+    items: {},
+    sel: {},
   };
 
   const $ = (id) => document.getElementById(id);
@@ -79,7 +85,12 @@
   // League means nothing in Runeterra, so a tab change starts from a clean slate.
   function resetFilters() {
     for (const k of Object.keys(state.sel)) state.sel[k].clear();
-    for (const id of ["psChamps", "psThemes", "psArtists"]) $(id).value = "";
+    for (const p of state.panels) {
+      const search = $(`ps${p.id}`);
+      if (search) search.value = "";
+      const sc = $(`sc${p.id}`);
+      if (sc) sc.textContent = "";
+    }
     $("fYear").value = "";
     closeLightbox();
   }
@@ -103,6 +114,7 @@
       tab.classList.toggle("on", on);
       tab.setAttribute("aria-selected", on ? "true" : "false");
     }
+    buildPanels(d.meta.tagGroups || []);
     resetFilters();
     buildIndex();
     buildSelects();
@@ -123,10 +135,68 @@
     }
   }
 
+  // Panels are built from the catalogue, so a new tag group in build_data.py
+  // needs no HTML here: meta.tagGroups names the groups and the sidebar renders
+  // one panel each.
+  function buildPanels(tagGroups) {
+    const host = $("panels");
+    host.innerHTML = "";
+    const panels = [...BASE_PANELS, ...tagGroups.map(([kind, label]) => ({ kind, label, chips: true }))];
+    state.panels = panels;
+    state.sel = {};
+    for (const p of panels) {
+      p.id = cap(p.kind);
+      state.sel[p.kind] = new Set();
+
+      const box = document.createElement("details");
+      box.className = "fpanel";
+      box.id = `fp${p.id}`;
+      if (p.open) box.open = true;
+
+      const summary = document.createElement("summary");
+      summary.textContent = p.label;
+      const sc = document.createElement("span");
+      sc.className = "sc";
+      sc.id = `sc${p.id}`;
+      summary.append(sc);
+
+      const ctl = document.createElement("div");
+      ctl.className = "pctl";
+      const search = document.createElement("input");
+      search.className = "psearch";
+      search.id = `ps${p.id}`;
+      search.type = "search";
+      search.placeholder = "Search names, comma separated";
+      const all = document.createElement("button");
+      all.className = "pall";
+      all.textContent = "Select all";
+      const none = document.createElement("button");
+      none.className = "pnone";
+      none.textContent = "Clear";
+      ctl.append(search, all, none);
+
+      const grid = document.createElement("div");
+      grid.className = "pgrid" + (p.tiles ? " tiles" : " pills") + (p.chips ? " chips" : "");
+      grid.id = `pg${p.id}`;
+
+      box.append(summary, ctl, grid);
+      host.appendChild(box);
+
+      grid.addEventListener("change", () => updateSel(p.kind));
+      search.addEventListener("input", () => renderPanel(p.kind));
+      all.addEventListener("click", () => panelAll(p.kind));
+      none.addEventListener("click", () => panelNone(p.kind));
+    }
+  }
+
+  const tagValues = (s, kind) => (s.tags && s.tags[kind]) || [];
+
   function buildIndex() {
     const champs = new Map();
     const themes = new Map();
     const artists = new Map();
+    const tags = {};
+    for (const p of state.panels) if (p.chips) tags[p.kind] = new Map();
     for (const s of state.skins) {
       const c = champs.get(s.ch);
       if (c) c.count++; else champs.set(s.ch, { count: 1, rec: s });
@@ -138,19 +208,29 @@
         const ar = artists.get(a);
         if (ar) ar.count++; else artists.set(a, { count: 1 });
       }
+      for (const kind of Object.keys(tags)) {
+        const bucket = tags[kind];
+        for (const v of tagValues(s, kind)) {
+          const t = bucket.get(v);
+          if (t) t.count++; else bucket.set(v, { count: 1 });
+        }
+      }
     }
-    state.champs = [...champs.entries()].map(([name, v]) => ({ name, count: v.count, rec: v.rec }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-    state.themes = [...themes.entries()].map(([name, v]) => ({ name, count: v.count, rec: v.rec }))
-      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
-    state.artists = [...artists.entries()].map(([name, v]) => ({ name, count: v.count }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    const entries = (map) => [...map.entries()].map(([name, v]) => ({ name, ...v }));
+    state.items = {
+      champs: entries(champs).sort((a, b) => a.name.localeCompare(b.name)),
+      themes: entries(themes).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+      artists: entries(artists).sort((a, b) => a.name.localeCompare(b.name)),
+    };
+    for (const p of state.panels) {
+      if (!p.chips) continue;
+      state.items[p.kind] = entries(tags[p.kind])
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    }
   }
 
   function renderPanels() {
-    renderPanel("champs");
-    renderPanel("themes");
-    renderPanel("artists");
+    for (const p of state.panels) renderPanel(p.kind);
   }
 
   // Panel searches accept several names at once, separated by commas:
@@ -162,16 +242,16 @@
     const tokens = searchTokens(kind);
     const pgrid = $(`pg${cap(kind)}`);
     pgrid.innerHTML = "";
-    const items = state[kind];
+    const panel = state.panels.find((p) => p.kind === kind);
     const sel = state.sel[kind];
-    for (const it of items) {
+    for (const it of state.items[kind]) {
       if (tokens.length && !tokens.some((t) => it.name.toLowerCase().includes(t))) continue;
-      pgrid.appendChild(kind === "artists" ? makePill(it, sel) : makeTile(it, kind, sel));
+      pgrid.appendChild(panel.tiles ? makeTile(it, sel) : makePill(it, sel));
     }
     syncClear();
   }
 
-  function makeTile(it, kind, sel) {
+  function makeTile(it, sel) {
     const label = document.createElement("label");
     label.className = "tile";
     label.title = `${it.name} (${it.count})`;
@@ -236,15 +316,15 @@
   }
 
   function resetPanels() {
-    for (const kind of ["champs", "themes", "artists"]) {
-      state.sel[kind] = new Set();
-      $(`sc${cap(kind)}`).textContent = "";
+    for (const p of state.panels) {
+      state.sel[p.kind] = new Set();
+      $(`sc${p.id}`).textContent = "";
     }
   }
 
   function hasActiveFilters() {
-    const searched = ["champs", "themes", "artists"].some(
-      (k) => state.sel[k].size > 0 || $(`ps${cap(k)}`).value.trim() !== ""
+    const searched = state.panels.some(
+      (p) => state.sel[p.kind].size > 0 || $(`ps${p.id}`).value.trim() !== ""
     );
     return searched || $("fYear").value !== "" || $("fSort").value !== "new";
   }
@@ -255,24 +335,18 @@
     $("clearbtn").hidden = !hasActiveFilters();
   }
 
-  for (const kind of ["champs", "themes", "artists"]) {
-    const pgrid = $(`pg${cap(kind)}`);
-    pgrid.addEventListener("change", () => updateSel(kind));
-    $(`ps${cap(kind)}`).addEventListener("input", () => renderPanel(kind));
-  }
-  document.querySelectorAll(".pall").forEach((b) => b.addEventListener("click", () => panelAll(b.dataset.kind)));
-  document.querySelectorAll(".pnone").forEach((b) => b.addEventListener("click", () => panelNone(b.dataset.kind)));
-
   function apply() {
     syncClear();
     const year = $("fYear").value;
     const sort = $("fSort").value;
-    const sel = state.sel;
 
+    // Within a panel the values are alternatives (OR); across panels every
+    // chosen panel has to match (AND), so Kind=Monster + Vibe=Cute works.
     let list = state.skins.filter((s) => {
-      if (sel.champs.size && !sel.champs.has(s.ch)) return false;
-      if (sel.themes.size && !(s.set || []).some((t) => sel.themes.has(t))) return false;
-      if (sel.artists.size && !(s.art || []).some((a) => sel.artists.has(a))) return false;
+      for (const p of state.panels) {
+        const sel = state.sel[p.kind];
+        if (sel.size && !matches(s, p.kind, sel)) return false;
+      }
       if (year && String(s._year) !== year) return false;
       return true;
     });
@@ -300,6 +374,13 @@
     empty.hidden = list.length !== 0;
     more.hidden = true;
     renderStep();
+  }
+
+  function matches(rec, kind, sel) {
+    if (kind === "champs") return sel.has(rec.ch);
+    if (kind === "themes") return (rec.set || []).some((t) => sel.has(t));
+    if (kind === "artists") return (rec.art || []).some((a) => sel.has(a));
+    return tagValues(rec, kind).some((v) => sel.has(v));
   }
 
   function renderStep() {
@@ -432,7 +513,14 @@
 
     const info = $("lbInfo");
     info.innerHTML = "";
+    const t = rec.tags || {};
     const rows = [
+      ["Vibes", (t.vibe || []).join(", ")],
+      ["Kind", (t.kind || []).join(", ")],
+      ["Species", (t.species || []).join(", ")],
+      ["Gender", (t.gender || []).join(", ")],
+      ["Region", (t.region || []).join(", ")],
+      ["Class", (t.class || []).join(", ")],
       ["Themes", (rec.set || []).join(", ")],
       ["Artists", (rec.art || []).join(", ")],
       ["Artwork date", rec.d],
@@ -602,9 +690,7 @@
   });
 
   $("clearbtn").addEventListener("click", () => {
-    for (const kind of ["champs", "themes", "artists"]) {
-      $(`ps${cap(kind)}`).value = "";
-    }
+    for (const p of state.panels) $(`ps${p.id}`).value = "";
     resetPanels();
     $("fYear").value = "";
     $("fSort").value = "new";
