@@ -101,7 +101,7 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
 #filters {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
 }
 #filters select {
   padding: 8px 10px;
@@ -178,6 +178,11 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
 }
 .pctl .psearch:focus { border-color: var(--cyan); }
 .pctl button { padding: 6px 9px; font-size: 11px; white-space: nowrap; }
+.pctl .ponly.on {
+  border-color: var(--cyan);
+  background: rgba(10, 200, 185, 0.14);
+  color: var(--gold2);
+}
 
 .pgrid {
   display: grid;

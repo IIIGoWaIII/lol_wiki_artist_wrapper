@@ -24,6 +24,7 @@
     panels: BASE_PANELS,
     items: {},
     sel: {},
+    onlySel: {},
   };
 
   const $ = (id) => document.getElementById(id);
@@ -85,6 +86,7 @@
   // League means nothing in Runeterra, so a tab change starts from a clean slate.
   function resetFilters() {
     for (const k of Object.keys(state.sel)) state.sel[k].clear();
+    for (const k of Object.keys(state.onlySel)) state.onlySel[k] = false;
     for (const p of state.panels) {
       const search = $(`ps${p.id}`);
       if (search) search.value = "";
@@ -147,6 +149,7 @@
     for (const p of panels) {
       p.id = cap(p.kind);
       state.sel[p.kind] = new Set();
+      state.onlySel[p.kind] = false;
 
       const box = document.createElement("details");
       box.className = "fpanel";
@@ -167,13 +170,22 @@
       search.id = `ps${p.id}`;
       search.type = "search";
       search.placeholder = "Search names, comma separated";
+      // Shown only once something is selected, so the panel can collapse to
+      // just the chosen names without leaving a useless control in the row.
+      const only = document.createElement("button");
+      only.className = "ponly";
+      only.id = `po${p.id}`;
+      only.textContent = "Only selected";
+      only.title = "Hide everything except the selected names";
+      only.setAttribute("aria-pressed", "false");
+      only.hidden = true;
       const all = document.createElement("button");
       all.className = "pall";
       all.textContent = "Select all";
       const none = document.createElement("button");
       none.className = "pnone";
       none.textContent = "Clear";
-      ctl.append(search, all, none);
+      ctl.append(search, only, all, none);
 
       const grid = document.createElement("div");
       grid.className = "pgrid" + (p.tiles ? " tiles" : " pills") + (p.chips ? " chips" : "");
@@ -184,6 +196,7 @@
 
       grid.addEventListener("change", () => updateSel(p.kind));
       search.addEventListener("input", () => renderPanel(p.kind));
+      only.addEventListener("click", () => toggleOnlySelected(p.kind));
       all.addEventListener("click", () => panelAll(p.kind));
       none.addEventListener("click", () => panelNone(p.kind));
     }
@@ -244,11 +257,34 @@
     pgrid.innerHTML = "";
     const panel = state.panels.find((p) => p.kind === kind);
     const sel = state.sel[kind];
+    // Deselecting the last name must fall back to the full list, so the empty
+    // selection disables the toggle for this pass too.
+    const only = state.onlySel[kind] && sel.size > 0;
     for (const it of state.items[kind]) {
+      if (only && !sel.has(it.name)) continue;
       if (tokens.length && !tokens.some((t) => it.name.toLowerCase().includes(t))) continue;
       pgrid.appendChild(panel.tiles ? makeTile(it, sel) : makePill(it, sel));
     }
+    syncOnlySelected(kind);
     syncClear();
+  }
+
+  // The "Only selected" toggle keeps the panel to the chosen names. It is only
+  // offered while something is selected, and turns itself off with the last
+  // deselection so the panel never sticks in an empty state.
+  function syncOnlySelected(kind) {
+    if (!state.sel[kind].size) state.onlySel[kind] = false;
+    const btn = $(`po${cap(kind)}`);
+    if (!btn) return;
+    const on = state.onlySel[kind];
+    btn.hidden = state.sel[kind].size === 0;
+    btn.classList.toggle("on", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  function toggleOnlySelected(kind) {
+    state.onlySel[kind] = !state.onlySel[kind];
+    renderPanel(kind);
   }
 
   function makeTile(it, sel) {
@@ -302,6 +338,10 @@
     });
     state.sel[kind] = next;
     $(`sc${cap(kind)}`).textContent = next.size ? `(${next.size})` : "";
+    // While the panel is collapsed to the selection, a deselected name has to
+    // leave immediately, so rebuild the grid instead of only updating counts.
+    if (state.onlySel[kind]) renderPanel(kind);
+    else syncOnlySelected(kind);
     apply();
   }
 
@@ -318,6 +358,7 @@
   function resetPanels() {
     for (const p of state.panels) {
       state.sel[p.kind] = new Set();
+      state.onlySel[p.kind] = false;
       $(`sc${p.id}`).textContent = "";
     }
   }
