@@ -20,7 +20,7 @@ WEB_DIR = ROOT / "web"
 DATA_DIR = ROOT / "data"
 # The only data files the page may fetch. An allowlist rather than a path check,
 # so the build inputs (artwork_overrides.json) stay server-side.
-DATA_FILES = ("skins.json", "skins-wr.json", "skins-lor.json")
+DATA_FILES = ("skins.json", "skins-wr.json", "skins-lor.json", "reference.json")
 
 MIME = {
     ".html": "text/html; charset=utf-8",

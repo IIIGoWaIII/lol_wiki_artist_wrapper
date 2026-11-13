@@ -68,16 +68,22 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   min-width: 0;
 }
 
-#gametabs {
-  display: flex;
-  gap: 6px;
-  padding: 14px 22px 0;
+#topbar {
   position: sticky;
   top: 0;
   z-index: 10;
   background: var(--bg);
   border-bottom: 1px solid var(--line);
 }
+
+#gametabs {
+  display: flex;
+  gap: 6px;
+  padding: 14px 22px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+#gametabs::-webkit-scrollbar { display: none; }
 .gtab {
   border: 1px solid transparent;
   border-bottom: none;
@@ -204,6 +210,12 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
 /* Tag values are short words, so they wrap two or three per row. */
 .pgrid.chips {
   grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+}
+.pmore {
+  grid-column: 1 / -1;
+  margin: 2px 2px 4px;
+  color: var(--dim);
+  font-size: 11px;
 }
 
 .tile {
@@ -372,6 +384,116 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   margin: 6px auto 40px;
 }
 #empty { text-align: center; color: var(--dim); font-size: 15px; padding: 60px 0; }
+
+/* --- Reference tab ---------------------------------------------------------
+   A neutral, near-black board modelled on imaginemore.art: the art is the
+   interface, captions only appear under the cursor, and the search field sits
+   in the sticky header. Only the Reference tab switches these variables. */
+body.refmode {
+  --bg: #0d0d10;
+  --bg2: #141418;
+  --panel: #1a1a20;
+  --panel2: #232330;
+  --line: #2b2b34;
+  --text: #f0f0f2;
+  --dim: #94949f;
+  --gold: #8f8fa0;
+  --gold2: #f4f4f6;
+  --cyan: #c9c9d4;
+  --grad: linear-gradient(180deg, #1a1a20 0%, #0d0d10 100%);
+}
+
+#refbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 22px 12px;
+}
+.refsearch { flex: 1; min-width: 0; }
+#refq {
+  width: 100%;
+  padding: 11px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #101014;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+#refq::placeholder { color: #6b6b77; }
+#refq:focus { border-color: #5a5a6a; background: #151519; }
+#refsrc { display: flex; gap: 6px; flex-shrink: 0; }
+#refsrc button {
+  border-radius: 999px;
+  padding: 7px 13px;
+  font-size: 12px;
+  background: transparent;
+  color: var(--dim);
+  border-color: var(--line);
+  white-space: nowrap;
+}
+#refsrc button .n { color: #6b6b77; margin-left: 5px; font-size: 11px; }
+#refsrc button.on { background: #f0f0f2; border-color: #f0f0f2; color: #101014; }
+#refsrc button.on .n { color: #55555f; }
+#refcount { color: var(--dim); font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+
+#grid.refgrid {
+  display: block;
+  padding: 14px 18px 60px;
+}
+.rrow { display: flex; gap: 8px; margin-bottom: 8px; }
+.rcard {
+  position: relative;
+  display: block;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #15151a;
+  cursor: pointer;
+  height: 100%;
+}
+.rcard img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.35s ease;
+}
+.rcard:hover img, .rcard:focus-visible img { transform: scale(1.035); }
+.rcard:focus-visible { outline: 2px solid #f0f0f2; outline-offset: 2px; }
+.rcard .rov {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 34px 10px 9px;
+  text-align: left;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0));
+  opacity: 0;
+  transition: opacity 0.16s ease;
+  pointer-events: none;
+}
+.rcard:hover .rov, .rcard:focus-visible .rov { opacity: 1; }
+.rcard .rt {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f7f7f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rcard .rs {
+  font-size: 11px;
+  color: #b9b9c4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#lbInfo a { color: var(--cyan); text-decoration: none; }
+#lbInfo a:hover { text-decoration: underline; }
 
 #lb {
   position: fixed;
@@ -593,6 +715,9 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   #gametabs { padding-left: 66px; padding-right: 10px; }
   .gtab { padding: 9px 11px; font-size: 12px; }
   #grid { padding-left: 66px; }
+  #refbar { padding-left: 66px; padding-right: 12px; flex-wrap: wrap; }
+  #grid.refgrid { padding-left: 66px; padding-right: 10px; }
+  .rrow { gap: 6px; margin-bottom: 6px; }
 }
 
 @media (max-width: 520px) {
@@ -604,4 +729,9 @@ button:hover { background: var(--panel2); border-color: var(--gold); color: var(
   .pctl .psearch { min-width: 100%; }
   .pgrid { grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 6px; padding: 8px; }
   #pgThemes, .pgrid.pills { grid-template-columns: 1fr; }
+  #refbar { padding: 8px 10px 10px 66px; gap: 8px; }
+  .refsearch { flex-basis: 100%; }
+  #refsrc { overflow-x: auto; max-width: 100%; }
+  #refcount { display: none; }
+  #grid.refgrid { padding: 10px 8px 40px 66px; }
 }

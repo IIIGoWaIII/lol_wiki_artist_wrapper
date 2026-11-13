@@ -1,0 +1,45 @@
+name: Refresh reference board
+
+# Weekly rather than daily: both libraries are large, curated collections that
+# move by a few films a week, and the film-grab crawl is ~2,400 posts.
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reference-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # --refresh: the response cache is a local-resume aid, CI always re-crawls.
+      - name: Crawl reference libraries
+        run: python build_reference.py --refresh
+
+      # The push below triggers the Pages workflow, which assembles and deploys
+      # the site. Deploying here as well would race with it.
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet -- data/reference.json; then
+            echo "No changes to the reference board"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/reference.json
+          git commit -m "chore: refresh reference board ($(date +%Y-%m-%d))"
+          git pull --rebase origin main
+          git push origin main

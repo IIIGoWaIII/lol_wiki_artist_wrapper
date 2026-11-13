@@ -2,11 +2,12 @@
 
 Local reference-gallery wrapper for the [League of Legends Wiki](https://wiki.leagueoflegends.com/en-us/) splash arts, built for quickly pulling full-HD splash references into [PureRef](https://www.pureref.com/).
 
-Covers three games, one tab each: **League of Legends**, **Wild Rift** and **Legends of Runeterra**. TFT is excluded because it reuses League artwork, and 2XKO has no cosmetics on the wiki yet.
+Covers three games, one tab each: **League of Legends**, **Wild Rift** and **Legends of Runeterra**, plus a fourth **Reference** tab with a general visual reference board for non-League study. TFT is excluded because it reuses League artwork, and 2XKO has no cosmetics on the wiki yet.
 
 ## Features
 
 - Browse each game's splash arts as a filterable gallery.
+- **Reference** tab: a searchable board of ~32k film stills and paintings, styled like [imaginemore.art](https://imaginemore.art): justified rows, captions on hover, one search box, and filters for director, cinematographer, production designer, genre, country, artist, movement and decade.
 - Multi-select filter panels with inline search and **Select all / Clear**:
   - **Champions** — grid of champion avatars (alphabetical).
   - **Themes** — grid of theme-representative splashes.
@@ -15,7 +16,7 @@ Covers three games, one tab each: **League of Legends**, **Wild Rift** and **Leg
 - Sort by release date or champion, newest or oldest first.
 - High-definition splashes (up to 6000x3500+) with resolution shown on every card and in the detail view.
 - **Other versions** listed in the side panel for reworked/older splashes (e.g. pre-rework `_old`/`_Unused` art) — click one to load it into the main view.
-- Shareable links: `?game=wr&champ=Jinx&skin=Project` opens that skin directly. The lightbox also keeps the URL in sync as you browse.
+- Shareable links: `?game=wr&champ=Jinx&skin=Project` opens that skin directly, and `?game=ref&r=film:Discrete_Charm_01.jpg` opens a frame on the reference board. The lightbox also keeps the URL in sync as you browse.
 - Keyboard: Tab to a card, Enter or Space opens it, arrow keys step through the gallery, Esc closes.
 - Each game is cropped to its own native artwork ratio, so Wild Rift and Runeterra card art are not cut to League's 1215x717.
 
@@ -55,6 +56,24 @@ Outputs one file per game, each with its own `meta.aspect` used by the frontend:
 | Wild Rift | `Module:SkinDataWR/data` | `data/skins-wr.json` |
 | Legends of Runeterra | `Module:LoRCosmetics/skins` + `Module:LoRData/data` | `data/skins-lor.json` |
 
+### Reference board
+
+`python build_reference.py` builds `data/reference.json` from two open libraries:
+
+| Library | Source | What it gives |
+| --- | --- | --- |
+| Cinematic | [film-grab.com](https://film-grab.com) WordPress REST API | film stills with director, director of photography, production designer, genre, country, year and aspect ratio |
+| Classic Art | [imaginemore.art](https://imaginemore.art) `/api/assets` | paintings with artist, year and movement |
+
+Imagine More's Cinematic, Game Art, Animated and Music libraries are paywalled past a 150-item preview, and their anonymous Classic Art window stops at roughly 3,500 unique images, so that is the ceiling for the art half. film-grab lists about 2,400 films with still galleries; `--stills` decides how many frames are kept per film (an even spread through the film, default 8). Every API response is cached in `.cache/reference/`, so a run that trips film-grab's rate limit resumes instead of starting over; `--refresh` ignores the cache.
+
+```powershell
+python build_reference.py                 # both libraries
+python build_reference.py --only film     # just the cinematic half
+python build_reference.py --stills 12     # more frames per film
+```
+
+
 ### Wild Rift and League artwork overlap
 
 Wild Rift ports many League skins, so 667 of the 1073 WR cosmetics share a champion and skin name with a League skin. All of them are kept, for two reasons measured against the wiki:
@@ -87,12 +106,13 @@ The bio pages are fetched in batches of 50 titles through the API (four requests
 
 ```
 build_data.py   fetch + parse + verify -> data/skins{,-wr,-lor}.json
+build_reference.py  crawl film-grab + Imagine More -> data/reference.json
 wiki_tags.py    champion lore + skin-line vibes -> the filter tags
 server.py       static server (local browsing), gzip + ETag
 web/            index.html, style.css, app.js (no build step, vanilla JS)
-data/           generated catalogues, one JSON per game
+data/           generated catalogues, one JSON per game, plus the reference board
 tools/          one-off wiki analysis scripts (not part of the build)
-.github/        CI: daily data refresh, Pages deploy on push
+.github/        CI: daily skin refresh, weekly reference refresh, Pages deploy
 ```
 
 ## Notes
@@ -102,4 +122,5 @@ tools/          one-off wiki analysis scripts (not part of the build)
 - Runeterra files are named by card code (`01DE012_Rugged-HD-full.jpg`). A card's files also cover its star levels (`T1`-`T8`) and its other cosmetics, so only the `-alt` family is treated as alternate art of the same cosmetic.
 - Variant/prestige skins reuse their base skin's art.
 - Images are hot-linked from the wiki; HD originals are up to 6000px+ wide. Grid and sidebar thumbnails request the 420px variant, the lightbox requests 1200px.
+- The reference board hot-links its stills and paintings the same way, from `film-grab.com` and `inspiration.imaginemore.art`. The film stills are 1920px JPEGs at roughly 85 KB, so the lightbox loads the grid image rather than a second copy.
 - Skins with no artwork on the wiki (mostly unreleased `Upcoming` entries) are kept in the catalogue but show a placeholder. League currently has none; Wild Rift has a handful. Each catalogue's `meta.missingImage` holds the current count.
