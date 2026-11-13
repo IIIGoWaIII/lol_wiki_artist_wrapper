@@ -73,6 +73,42 @@ python build_reference.py --only film     # just the cinematic half
 python build_reference.py --stills 12     # more frames per film
 ```
 
+### Scene tags
+
+Search is substring matching over metadata, so `train station` only works if the
+image is actually tagged as one. `tag_images.py` runs a vision pass over every
+image and writes closed facets plus a one-line caption into `data/tags.json`:
+
+| Facet | Values |
+| --- | --- |
+| `place` | train station, kitchen, throne room, battlefield, procession, … |
+| `setting` | interior, exterior, both |
+| `light` | daylight, dusk, night, neon, candlelit, warm lamp, low key, … |
+| `weather` | rain, snow, fog, smoke, haze, … |
+| `people` | none, single, few, crowd |
+| `shot` | close-up, portrait, full body, wide, landscape, detail |
+| `mood` | calm, tense, melancholic, ominous, awe, … |
+
+Facets are a closed vocabulary on purpose: free-form keywords fragment into
+"railway station" / "station platform" / "train platform" and make filtering
+worse. The sidebar turns them into five panels — Scenes, Setting, Light &
+weather, Framing, Mood — and the search box indexes the captions too.
+
+```powershell
+python tag_images.py reference            # every reference image
+python tag_images.py skins --game lol     # one game's splashes
+python tag_images.py reference --limit 40 --dry   # pilot
+python tag_images.py reference --aggregate-only   # rebuild tags.json from cache
+python tagmerge.py                        # merge tags.json into the catalogues
+```
+
+The vision engine is the local `opencode` CLI, not an API key: it reads the
+attached images through the same OpenCode subscription the coding session uses.
+Each image is cached in `.cache/tags/<key>.json`, so a run resumes where it
+stopped and the weekly refresh only tags new files. `build_reference.py` and
+`build_data.py` re-apply `data/tags.json` on every rebuild, so a fresh catalogue
+never loses its tags.
+
 
 ### Wild Rift and League artwork overlap
 

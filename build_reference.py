@@ -36,6 +36,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import tagmerge
+
 DATA_DIR = "data"
 OUT_PATH = os.path.join(DATA_DIR, "reference.json")
 # Every API response is cached: film-grab rate-limits a crawl that asks for 42
@@ -370,6 +372,14 @@ def main():
     if "art" in sources:
         art_items = build_art(args.art)
         items = [i for i in items if i["src"] != "art"] + art_items
+
+    # Scene tags from tag_images.py survive a rebuild: the tag pass is expensive,
+    # this lookup is not.
+    scene_tags = tagmerge.load()
+    for it in items:
+        tag = scene_tags.get(f"ref:{it['src']}:{it['id']}")
+        if tag:
+            tagmerge.for_reference(it, tag)
 
     write(films, items)
 

@@ -36,6 +36,7 @@ from io import BytesIO
 
 from PIL import Image
 
+import tagmerge
 import wiki_tags
 
 WIKI = "https://wiki.leagueoflegends.com/en-us"
@@ -1206,6 +1207,16 @@ def build_game(game: Game, overrides: dict, tags: wiki_tags.TagSource) -> dict:
 
     ctx.flush_siblings()
 
+    # Scene tags from tag_images.py, keyed by game/champion/skin, so a rebuild
+    # keeps them without re-running the vision pass.
+    scene_tags = tagmerge.load()
+    tagged = 0
+    for rec in skins:
+        tag = scene_tags.get(f"skin:{game.key}:{rec['ch']}:{rec['s']}")
+        if tag:
+            tagmerge.for_skin(rec, tag)
+            tagged += 1
+
     sets = sorted(set_counts.items(), key=lambda kv: (-kv[1], kv[0]))
     meta = {
         "gen": time.strftime("%Y-%m-%d"),
@@ -1220,7 +1231,8 @@ def build_game(game: Game, overrides: dict, tags: wiki_tags.TagSource) -> dict:
         # previously written JSON below sees identical structures.
         "sets": [[name, count] for name, count in sets],
         # The tag vocabulary the sidebar renders; values come from the records.
-        "tagGroups": [list(group) for group in wiki_tags.GROUPS],
+        "tagGroups": [list(group) for group in wiki_tags.GROUPS]
+        + ([list(g) for g in tagmerge.GROUPS] if tagged else []),
     }
 
     os.makedirs(DATA_DIR, exist_ok=True)

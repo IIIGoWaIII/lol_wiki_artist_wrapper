@@ -28,6 +28,21 @@
     { kind: "artist", label: "Artists", chips: true, open: true },
     { kind: "movement", label: "Movements", chips: true },
     { kind: "decade", label: "Decades", chips: true },
+    { kind: "scene", label: "Scenes", chips: true, open: true },
+    { kind: "setting", label: "Setting", chips: true },
+    { kind: "atmosphere", label: "Light & weather", chips: true },
+    { kind: "framing", label: "Framing", chips: true },
+    { kind: "mood", label: "Mood", chips: true },
+  ];
+  // The scene facets every tagged image gets, whether it is a film still, a
+  // painting or a splash. build_data.py writes the same names into a game's
+  // meta.tagGroups, so both sides of the app read them the same way.
+  const SCENE_GROUPS = [
+    ["scene", "Scenes"],
+    ["setting", "Setting"],
+    ["atmosphere", "Light & weather"],
+    ["framing", "Framing"],
+    ["mood", "Mood"],
   ];
   // Reference rows are sized to the container, so they need the width the grid
   // actually has and a target row height rather than a fixed column count.
@@ -158,6 +173,18 @@
         };
     const year = film ? yearOfText(film.y) : yearOfText(item.y);
     if (year) tags.decade = [String(Math.floor(year / 10) * 10)];
+    // Scene facets come from tag_images.py: closed lists, so a phrase like
+    // "train station" is one exact filter value instead of three loose words.
+    const sc = item.sc;
+    if (sc) {
+      if (sc.place && sc.place.length) tags.scene = sc.place;
+      if (sc.setting && sc.setting !== "unknown") tags.setting = [sc.setting];
+      const atmos = [...(sc.light || []), ...(sc.weather || [])];
+      if (atmos.length) tags.atmosphere = atmos;
+      const framing = [...(sc.people && sc.people !== "none" ? [sc.people] : []), ...(sc.shot ? [sc.shot] : [])];
+      if (framing.length) tags.framing = framing;
+      if (sc.mood && sc.mood.length) tags.mood = sc.mood;
+    }
     const title = (film ? film.t : item.t) || "Untitled";
     const creator = film ? tags.director[0] || "" : item.cr || "";
     const ar = film ? ratioOf(film.ar) : ratioOf(item.ar);
@@ -178,18 +205,7 @@
       img: item.u,
       t: item.u,
       tags,
-      _hay: [
-        title,
-        creator,
-        (tags.director || []).join(" "),
-        (tags.cinematographer || []).join(" "),
-        (tags.designer || []).join(" "),
-        (tags.genre || []).join(" "),
-        (tags.country || []).join(" "),
-        (tags.artist || []).join(" "),
-        (tags.movement || []).join(" "),
-        year || "",
-      ]
+      _hay: [title, creator, Object.values(tags).flat().join(" "), item.cap || "", year || ""]
         .join(" ")
         .toLowerCase(),
     };
@@ -959,12 +975,18 @@
           ["Country", (tg.country || []).join(", ")],
           ["Year", f.y],
           ["Aspect ratio", f.ar],
+          ["Scene", (tg.scene || []).join(", ")],
+          ["Light", (tg.atmosphere || []).join(", ")],
+          ["Mood", (tg.mood || []).join(", ")],
         ]
       : [
           ["Artist", (tg.artist || []).join(", ")],
           ["Movement", (tg.movement || []).join(", ")],
           ["Year", rec._item.y],
+          ["Scene", (tg.scene || []).join(", ")],
+          ["Mood", (tg.mood || []).join(", ")],
         ];
+    if (rec._item.cap) rows.push(["Caption", rec._item.cap]);
     for (const [k, v] of rows) {
       if (!v) continue;
       const dt = document.createElement("dt");
