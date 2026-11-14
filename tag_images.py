@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import hashlib
+import html
 import io
 import json
 import os
@@ -32,6 +33,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from PIL import Image
@@ -143,14 +145,22 @@ def cache_name(key: str) -> str:
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:24]
 
 
-def image_path(item: dict) -> str:
+def fetch_url(url: str) -> str:
+    """Some catalogue paths were stored entity-escaped, and film-grab 404s on them."""
+    if "&#" not in urllib.parse.unquote(url):
+        return url
+    return urllib.parse.quote(html.unescape(urllib.parse.unquote(url)), safe=":/?&=#")
+
+
+def image_path(item: dict) -> str | None:
     os.makedirs(IMG_DIR, exist_ok=True)
     path = os.path.join(IMG_DIR, cache_name(item["key"]) + ".jpg")
     if os.path.exists(path):
         return path
+    url = fetch_url(item["url"])
     for attempt in range(3):
         try:
-            req = urllib.request.Request(item["url"], headers={"User-Agent": USER_AGENT})
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
             with urllib.request.urlopen(req, timeout=90) as r:
                 raw = r.read()
             im = Image.open(io.BytesIO(raw)).convert("RGB")
@@ -160,11 +170,11 @@ def image_path(item: dict) -> str:
                 im = im.resize((round(w * scale), round(h * scale)), Image.LANCZOS)
             im.save(path, "JPEG", quality=78)
             return path
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
+        except (urllib.error.URLError, TimeoutError, OSError):
             if attempt == 2:
-                raise
+                return None
             time.sleep(1 + attempt)
-    return path
+    return None
 
 
 # --- agent call -------------------------------------------------------------
@@ -183,12 +193,20 @@ def opencode_cmd() -> list[str]:
     return [exe]
 
 
-def run_batch(batch: list[dict], model: str, timeout: int) -> tuple[list[dict], dict]:
-    paths = [image_path(it) for it in batch]
+def run_batch(batch: list[dict], model: str, timeout: int) -> tuple[list[dict], dict, list[dict]]:
+    """Taggable items, their rows and usage. Unreadable images are dropped, not fatal."""
+    kept, paths = [], []
+    for it in batch:
+        path = image_path(it)
+        if path:
+            kept.append(it)
+            paths.append(path)
+    if not kept:
+        return [], {}, []
     cmd = opencode_cmd() + ["run", "--standalone", "--archived", "--format", "json", "-m", model]
     for p in paths:
         cmd += ["--file", p]
-    cmd.append(prompt_for(len(batch)))
+    cmd.append(prompt_for(len(kept)))
 
     # stdin must be closed: `opencode run` blocks until stdin hits EOF, and an
     # inherited ssh channel or terminal pipe never does. That alone made every
@@ -226,9 +244,9 @@ def run_batch(batch: list[dict], model: str, timeout: int) -> tuple[list[dict], 
     if start < 0 or end <= start:
         raise ValueError("no JSON array in model output: " + text[:200])
     rows = json.loads(text[start : end + 1])
-    if not isinstance(rows, list) or len(rows) != len(batch):
-        raise ValueError(f"expected {len(batch)} objects, got {len(rows) if isinstance(rows, list) else type(rows)}")
-    return rows, usage
+    if not isinstance(rows, list) or len(rows) != len(kept):
+        raise ValueError(f"expected {len(kept)} objects, got {len(rows) if isinstance(rows, list) else type(rows)}")
+    return rows, usage, kept
 
 
 def clean_row(row: dict) -> dict:
@@ -260,8 +278,12 @@ def clean_row(row: dict) -> dict:
 def tag_batch(items: list[dict], model: str, timeout: int, log=print) -> dict[str, dict]:
     """Tags one batch, halving it when the model returns the wrong shape."""
     try:
-        rows, usage = run_batch(items, model, timeout)
-        return {it["key"]: clean_row(row) for it, row in zip(items, rows)}, usage
+        rows, usage, kept = run_batch(items, model, timeout)
+        kept_keys = {it["key"] for it in kept}
+        for it in items:
+            if it["key"] not in kept_keys:
+                log(f"    SKIP {it['key']}: image download failed")
+        return {it["key"]: clean_row(row) for it, row in zip(kept, rows)}, usage
     except (ValueError, RuntimeError, subprocess.TimeoutExpired) as e:
         if len(items) == 1:
             log(f"    FAIL {items[0]['key']}: {str(e)[:160]}")

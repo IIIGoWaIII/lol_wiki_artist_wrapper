@@ -105,9 +105,10 @@ python tagmerge.py                        # merge tags.json into the catalogues
 The vision engine is the local `opencode` CLI, not an API key: it reads the
 attached images through the same OpenCode subscription the coding session uses.
 Each image is cached in `.cache/tags/<key>.json`, so a run resumes where it
-stopped and the weekly refresh only tags new files. `build_reference.py` and
-`build_data.py` re-apply `data/tags.json` on every rebuild, so a fresh catalogue
-never loses its tags.
+stopped. `run_all.sh` runs the reference pass, the game passes, the aggregate and
+the merge in one go. The weekly catalogue refresh only re-applies `tags.json` —
+CI has no agent to run the vision pass, so run `tag_images.py` locally after a
+large catalogue change.
 
 
 ### Wild Rift and League artwork overlap
