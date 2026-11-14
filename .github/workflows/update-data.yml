@@ -38,6 +38,9 @@ jobs:
       - name: Build catalogues
         run: python build_data.py
 
+      - name: Find shared splashes
+        run: python build_dupes.py
+
       # The push below triggers the Pages workflow, which assembles and deploys
       # the site. Deploying here as well would race with it.
       - name: Commit and push if changed
