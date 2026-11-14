@@ -68,6 +68,9 @@ ROOT_FIELDS = {
 YEAR_RE = re.compile(r"^\d{4}$")
 DECADE_RE = re.compile(r"^\d{4}s$")
 ASPECT_RE = re.compile(r"^\d+(?:\.\d+)?\s*:\s*\d+(?:\.\d+)?$")
+# Most posts also carry "Year: 2006" in the body; categories miss it on ~2% of
+# films, which used to sort them as year zero.
+YEAR_TEXT_RE = re.compile(r"Year:\s*(\d{4})")
 
 
 REFRESH = False
@@ -220,6 +223,11 @@ def build_films(limit: int, stills: int) -> tuple[list[dict], list[dict]]:
 
         groups = film_group(cats, post.get("categories") or [])
         year = (groups.get("year") or groups.get("decade") or [""])[0]
+        if not year:
+            plain = re.sub(r"<[^>]+>", " ", content)
+            m = YEAR_TEXT_RE.search(plain)
+            if m:
+                year = m.group(1)
         idx = len(films)
         films.append(
             {
