@@ -7,17 +7,21 @@ Covers three games, one tab each: **League of Legends**, **Wild Rift** and **Leg
 ## Features
 
 - Browse each game's splash arts as a filterable gallery.
-- **Reference** tab: a searchable board of ~32k film stills and paintings, styled like [imaginemore.art](https://imaginemore.art): justified rows, captions on hover, one search box, and filters for director, cinematographer, production designer, genre, country, artist, movement and decade.
+- **Reference** tab: a searchable board of ~32k film stills and paintings, styled like [imaginemore.art](https://imaginemore.art): justified rows, captions on hover, one search box, and filters for director, cinematographer, production designer, genre, country, artist, movement and decade. Stills are grouped into one contact sheet per film (year, director, still count) and ordered chronologically — newest or oldest film, with undated films last — not by how many stills a film happens to have.
 - Multi-select filter panels with inline search and **Select all / Clear**:
   - **Champions** — grid of champion avatars (alphabetical).
   - **Themes** — grid of theme-representative splashes.
   - **Artists** — splash artists.
   - **Vibes, Kind, Species, Gender, Region, Class** — see [Tags](#tags) below. Panels combine as AND, values inside a panel as OR, so *Kind: Monster* + *Vibes: Cute* finds the cute monsters.
+- **Shared splashes collapse.** Some skins ship the exact same painting (Cafe Cuties, True Damage, event art). Those become one tile marked "Shared by N skins", with every skin listed in the viewer; different crops of the same painting stay separate because they are different artwork.
 - Sort by release date or champion, newest or oldest first.
+- **Board**: bookmark any tile (or press `S` in the viewer) and it collects into a right-hand panel, persisted in `localStorage`. Copy all saved links in one go for a PureRef import or a downloader.
+- **Zoom and pan** in the lightbox: scroll to zoom up to 800% about the cursor, drag to pan, double-click for fit/1:1, with a live percentage. Metadata is grouped (champion / artwork / dates) and a nearby strip steps through neighbours.
+- **Tile density** S/M/L for both the game grids and the reference rows, remembered between visits.
 - High-definition splashes (up to 6000x3500+) with resolution shown on every card and in the detail view.
 - **Other versions** listed in the side panel for reworked/older splashes (e.g. pre-rework `_old`/`_Unused` art) — click one to load it into the main view.
-- Shareable links: `?game=wr&champ=Jinx&skin=Project` opens that skin directly, and `?game=ref&r=film:Discrete_Charm_01.jpg` opens a frame on the reference board. The lightbox also keeps the URL in sync as you browse.
-- Keyboard: Tab to a card, Enter or Space opens it, arrow keys step through the gallery, Esc closes.
+- Shareable links: `?game=wr&champ=Jinx&skin=Project` opens that skin directly, `?game=ref&r=film:Discrete_Charm_01.jpg` opens a frame on the reference board, and filters travel in the URL too (`?game=lol&f=vibe:Cute|kind:Monster&q=star`). The lightbox also keeps the URL in sync as you browse.
+- Keyboard: Tab to a card, Enter or Space opens it, arrow keys step through the gallery, Esc closes; `/` focuses search, `b` toggles the board, `s` saves, `i` toggles details.
 - Each game is cropped to its own native artwork ratio, so Wild Rift and Runeterra card art are not cut to League's 1215x717.
 
 ## Run
@@ -71,6 +75,7 @@ Imagine More's Cinematic, Game Art, Animated and Music libraries are paywalled p
 python build_reference.py                 # both libraries
 python build_reference.py --only film     # just the cinematic half
 python build_reference.py --stills 12     # more frames per film
+python build_dupes.py                     # refresh shared-splash map
 ```
 
 ### Scene tags
@@ -144,6 +149,7 @@ The bio pages are fetched in batches of 50 titles through the API (four requests
 ```
 build_data.py   fetch + parse + verify -> data/skins{,-wr,-lor}.json
 build_reference.py  crawl film-grab + Imagine More -> data/reference.json
+build_dupes.py  byte-identical splashes -> data/dupes.json
 wiki_tags.py    champion lore + skin-line vibes -> the filter tags
 server.py       static server (local browsing), gzip + ETag
 web/            index.html, style.css, app.js (no build step, vanilla JS)

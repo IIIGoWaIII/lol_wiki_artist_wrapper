@@ -49,9 +49,57 @@
   const ROW_TARGET = 260;
   const ROW_TARGET_SMALL = 150;
   const ROW_GAP = 8;
+  // Home shelves. Counts are the catalogue sizes at the last data refresh; the
+  // browse header replaces them with the real number once a library loads.
+  const LIBRARIES = [
+    {
+      id: "lol",
+      name: "League of Legends",
+      sub: "Splash art · every champion",
+      count: 1944,
+      cover: "https://wiki.leagueoflegends.com/en-us/images/thumb/Ahri_SpiritBlossomSkin_HD.jpg/1200px-Ahri_SpiritBlossomSkin_HD.jpg",
+    },
+    {
+      id: "wr",
+      name: "Wild Rift",
+      sub: "Ports and originals",
+      count: 1063,
+      cover: "https://wiki.leagueoflegends.com/en-us/images/thumb/Lillia_CottontailSkin_WR_HD.jpg/1200px-Lillia_CottontailSkin_WR_HD.jpg",
+    },
+    {
+      id: "lor",
+      name: "Legends of Runeterra",
+      sub: "Card art, full bleed",
+      count: 272,
+      cover: "https://wiki.leagueoflegends.com/en-us/images/thumb/02DE006_StarGuardian-HD-full.jpg/1200px-02DE006_StarGuardian-HD-full.jpg",
+    },
+    {
+      id: "ref",
+      name: "Reference",
+      sub: "Film stills · paintings",
+      count: 32363,
+      cover: "https://film-grab.com/wp-content/uploads/photo-gallery/La_Bete_Humaine_010.jpg",
+    },
+  ];
   const cache = new Map();
+  const BOARD_KEY = "splash.board";
+  const DENSITY_KEY = "splash.density";
+
+  function loadBoard() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(BOARD_KEY) || "[]");
+      return Array.isArray(raw) ? raw.filter((e) => e && e.key && e.img) : [];
+    } catch {
+      return [];
+    }
+  }
+
   const state = {
     game: null,
+    view: "home",
+    query: "",
+    density: localStorage.getItem(DENSITY_KEY) || "m",
+    board: loadBoard(),
     skins: [],
     filtered: [],
     shown: 0,
@@ -72,12 +120,16 @@
   const more = $("more");
   const lb = $("lb");
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  const BOOKMARK =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 4h9.6A1.2 1.2 0 0 1 18 5.2V20l-6-4.2L6 20V5.2A1.2 1.2 0 0 1 7.2 4z"/></svg>';
 
-  const lbLens = $("lbLens");
-  const lbLensImg = $("lbLensImg");
-  let magZoom = 1.5;
-  const MAG_SIZE = 600;
-  let lbDown = false;
+  // Zoom-and-pan viewer state: scale plus a screen-pixel offset.
+  let zoom = 1;
+  let panX = 0;
+  let panY = 0;
+  let panning = false;
+  let panFromX = 0;
+  let panFromY = 0;
   let curFull = null;
 
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -94,10 +146,23 @@
 
   function precompute(rec, i) {
     rec._i = i;
+    rec._key = `${state.game}:${rec.ch}:${rec.s}`;
     rec._label = skinLabel(rec);
     const rOk = rec.r && /^\d{4}-\d{2}-\d{2}$/.test(rec.r);
     rec._date = rec.d || (rOk ? rec.r : null) || null;
     rec._year = yearOf(rec);
+    // One haystack per record so the search box stays a substring scan.
+    rec._hay = [
+      rec.ch,
+      rec.s,
+      rec._label,
+      (rec.set || []).join(" "),
+      (rec.art || []).join(" "),
+      Object.values(rec.tags || {}).flat().join(" "),
+      rec.cap || "",
+    ]
+      .join(" ")
+      .toLowerCase();
     return rec;
   }
 
@@ -123,6 +188,17 @@
 
   // --- Reference board -------------------------------------------------------
   const refmode = () => state.game === "ref";
+
+  // Byte-identical splashes from build_dupes.py: some skins ship the same
+  // painting (Cafe Cuties, True Damage, event art). Fetched once.
+  async function fetchDupes() {
+    if (cache.has("dupes")) return cache.get("dupes");
+    const p = fetch("data/dupes.json")
+      .then((r) => (r.ok ? r.json() : {}))
+      .catch(() => ({}));
+    cache.set("dupes", p);
+    return p;
+  }
 
   async function fetchRef() {
     if (cache.has("ref")) return cache.get("ref");
@@ -217,6 +293,171 @@
     opts[3].textContent = ref ? "Title Z\u2192A" : "Champion Z\u2192A";
   }
 
+  // Variant and prestige skins reuse their base splash, so the raw catalogue
+  // puts the same painting on the wall three times. Keep one card and list the
+  // other skins on it instead.
+  function collapseVariants(dupes = {}) {
+    const byGroup = new Map();
+    let unique = 0;
+    for (const rec of state.skins) {
+      rec._dup = false;
+      rec._also = null;
+      rec._dupCount = 0;
+      const groupKey = dupes[rec._key] || rec._key;
+      const group = byGroup.get(groupKey);
+      if (group) {
+        group.also.push(rec);
+        rec._dup = true;
+      } else {
+        byGroup.set(groupKey, { primary: rec, also: [] });
+        unique++;
+      }
+    }
+    const byImg = byGroup;
+    for (const { primary, also } of byImg.values()) {
+      if (also.length) {
+        primary._also = also;
+        primary._dupCount = also.length;
+      }
+    }
+    state.uniqueCount = unique;
+  }
+
+  // --- Board: save what you want to keep ------------------------------------
+  const onBoard = (key) => state.board.some((e) => e.key === key);
+
+  function persistBoard() {
+    try {
+      localStorage.setItem(BOARD_KEY, JSON.stringify(state.board));
+    } catch {
+      /* storage full or blocked: the board still works for this session */
+    }
+    syncBoard();
+  }
+
+  function toggleSave(rec, el) {
+    const i = state.board.findIndex((e) => e.key === rec._key);
+    if (i >= 0) {
+      state.board.splice(i, 1);
+    } else {
+      state.board.unshift({
+        key: rec._key,
+        label: rec._label,
+        ch: rec.ch || "",
+        img: rec.img,
+        t: rec.t || rec.img,
+        game: state.game,
+      });
+      toast("Saved to board");
+    }
+    const on = i < 0;
+    for (const btn of grid.querySelectorAll(".save")) {
+      if (btn.dataset.key !== rec._key) continue;
+      btn.classList.toggle("on", on);
+      btn.setAttribute("aria-pressed", String(on));
+      btn.title = on ? "Remove from board" : "Save to board";
+    }
+    persistBoard();
+    if ($("board").classList.contains("open")) renderBoard();
+  }
+
+  function syncBoard() {
+    const n = state.board.length;
+    const badge = $("boardBadge");
+    badge.textContent = n;
+    badge.hidden = n === 0;
+    $("boardBtn").classList.toggle("has-items", n > 0);
+    $("boardCount").textContent = n ? `(${n})` : "";
+    $("boardCopy").hidden = n === 0;
+    $("boardClear").hidden = n === 0;
+  }
+
+  function renderBoard() {
+    const host = $("boardBody");
+    host.innerHTML = "";
+    if (!state.board.length) {
+      const p = document.createElement("p");
+      p.className = "board-empty";
+      p.textContent = "Nothing saved yet. Tap the bookmark on any tile, or press S in the viewer.";
+      host.appendChild(p);
+      return;
+    }
+    const list = document.createElement("div");
+    list.className = "board-grid";
+    for (const e of state.board) {
+      const item = document.createElement("div");
+      item.className = "board-item";
+      const img = document.createElement("img");
+      img.src = e.t || e.img;
+      img.loading = "lazy";
+      img.alt = e.label;
+      const label = document.createElement("span");
+      label.className = "board-label";
+      label.textContent = e.ch ? `${e.ch} - ${e.label}` : e.label;
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "board-rm";
+      rm.textContent = "\u00d7";
+      rm.title = "Remove from board";
+      rm.setAttribute("aria-label", `Remove ${label.textContent}`);
+      rm.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        state.board = state.board.filter((x) => x.key !== e.key);
+        persistBoard();
+        renderBoard();
+      });
+      item.append(img, label, rm);
+      item.addEventListener("click", () => {
+        const idx = state.filtered.findIndex((r) => r._key === e.key);
+        if (idx >= 0) {
+          closeBoard();
+          openLightbox(idx);
+        } else {
+          window.open(e.img, "_blank", "noopener");
+        }
+      });
+      list.appendChild(item);
+    }
+    host.appendChild(list);
+  }
+
+  function buildSaveButton(rec) {
+    const save = document.createElement("span");
+    const on = onBoard(rec._key);
+    save.className = "save" + (on ? " on" : "");
+    save.dataset.key = rec._key;
+    save.setAttribute("role", "button");
+    save.tabIndex = 0;
+    save.title = on ? "Remove from board" : "Save to board";
+    save.setAttribute("aria-pressed", String(on));
+    save.innerHTML = BOOKMARK;
+    save.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleSave(rec, save);
+      save.title = onBoard(rec._key) ? "Remove from board" : "Save to board";
+    });
+    save.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggleSave(rec, save);
+    });
+    return save;
+  }
+
+  function applyDensity() {
+    for (const b of $("density").children) b.classList.toggle("on", b.dataset.density === state.density);
+    grid.classList.remove("d-s", "d-m", "d-l");
+    grid.classList.add("d-" + state.density);
+    try {
+      localStorage.setItem(DENSITY_KEY, state.density);
+    } catch {
+      /* ignore */
+    }
+    apply();
+  }
+
   async function loadRef() {
     const token = ++loadToken;
     const d = await fetchRef();
@@ -224,27 +465,85 @@
     state.game = "ref";
     state.refFilms = d.films || [];
     state.skins = (d.items || []).map(precomputeRef);
+    state.uniqueCount = state.skins.length;
     document.title = d.meta && d.meta.label ? `${d.meta.label} Board` : "Reference Board";
-    setTab("ref");
     setSortLabels(true);
-    document.body.classList.add("refmode");
-    $("refbar").hidden = false;
+    showBrowse("ref", d.meta || {});
+    $("subbar").hidden = false;
     $("fYear").hidden = true;
     $("fYear").value = "";
+    $("champstrip").hidden = true;
     buildRefSources(d.meta || {});
     buildPanels([], REF_PANELS);
     resetFilters();
     buildIndex();
     renderPanels();
+    restoreFilters();
     apply();
   }
 
-  function setTab(key) {
-    for (const tab of $("gametabs").children) {
-      const on = tab.dataset.game === key;
-      tab.classList.toggle("on", on);
-      tab.setAttribute("aria-selected", on ? "true" : "false");
+  function showBrowse(key, meta) {
+    state.view = "browse";
+    $("home").hidden = true;
+    $("browse").hidden = false;
+    window.scrollTo(0, 0);
+    const lib = LIBRARIES.find((l) => l.id === key);
+    $("libName").textContent = (meta && meta.label) || (lib && lib.name) || "Reference";
+    $("q").placeholder =
+      key === "ref" ? "Search films, directors, artists, places\u2026" : "Search champions, skins, artists\u2026";
+    updateHeaderCount();
+    syncDrawerState();
+  }
+
+  function updateHeaderCount() {
+    const n = state.uniqueCount || state.skins.length;
+    const lib = LIBRARIES.find((l) => l.id === state.game);
+    const noun = state.game === "ref" || state.game === "lor" ? "pieces" : state.game === "lol" ? "splashes" : "cosmetics";
+    $("libCount").textContent = n
+      ? `${n.toLocaleString()} ${noun}`
+      : lib
+        ? `${lib.count.toLocaleString()} ${noun}`
+        : "";
+  }
+
+  function goHome() {
+    closeLightbox();
+    closeDrawer();
+    state.view = "home";
+    state.query = "";
+    $("q").value = "";
+    $("home").hidden = false;
+    $("browse").hidden = true;
+    $("grid").innerHTML = "";
+    $("empty").hidden = true;
+    $("more").hidden = true;
+    document.title = "Splash Reference";
+    history.replaceState(null, "", location.pathname);
+    window.scrollTo(0, 0);
+  }
+
+  function openLibrary(key) {
+    if (!key) return;
+    state.query = "";
+    $("q").value = "";
+    // Show the library shell at once; a 13 MB reference file takes a moment.
+    showBrowse(key, LIBRARIES.find((l) => l.id === key) || null);
+    showSkeleton(key);
+    load(key).then(() => writeUrl(null)).catch((e) => toast("Failed to load data: " + e.message));
+  }
+
+  function showSkeleton(key) {
+    grid.classList.toggle("refgrid", key === "ref");
+    grid.innerHTML = "";
+    empty.hidden = true;
+    more.hidden = true;
+    const n = key === "ref" ? 8 : 6;
+    for (let i = 0; i < n; i++) {
+      const s = document.createElement("div");
+      s.className = "skel";
+      grid.appendChild(s);
     }
+    $("libCount").textContent = "Loading…";
   }
 
   function buildRefSources(meta) {
@@ -280,8 +579,8 @@
     }
   }
 
-  // Every selection belongs to the game it was made in: a champion chosen under
-  // League means nothing in Runeterra, so a tab change starts from a clean slate.
+  // Every selection belongs to the library it was made in: a champion chosen
+  // under League means nothing in Runeterra, so a switch starts clean.
   function resetFilters() {
     for (const k of Object.keys(state.sel)) state.sel[k].clear();
     for (const k of Object.keys(state.onlySel)) state.onlySel[k] = false;
@@ -292,9 +591,12 @@
       if (sc) sc.textContent = "";
     }
     $("fYear").value = "";
-    $("refq").value = "";
-    state.refQuery = "";
-    state.refSrc = "";
+    if (!restoringFilters) {
+      state.query = "";
+      state.refQuery = "";
+      state.refSrc = "";
+      $("q").value = "";
+    }
     if (refmode()) {
       syncRefSources();
       $("grid").classList.add("refgrid");
@@ -307,27 +609,31 @@
   async function load(key) {
     if (key === "ref") return loadRef();
     if (!Object.hasOwn(GAMES, key)) return;
-    // Two quick tab clicks resolve out of order; only the last one may paint.
+    // Two quick clicks resolve out of order; only the last one may paint.
     const token = ++loadToken;
     const d = await fetchGame(key);
     if (token !== loadToken) return;
     state.game = key;
     state.skins = d.skins.map(precompute);
+    const dupes = (await fetchDupes())[key] || {};
+    collapseVariants(dupes);
     // Each game crops artwork to its own native ratio; the CSS reads this.
     const [w, h] = d.meta.aspect || [1215, 717];
     document.documentElement.style.setProperty("--ar", `${w} / ${h}`);
     document.title = d.meta.label ? `${d.meta.label} Splash Reference` : "Splash Reference";
-    document.body.classList.remove("refmode");
-    $("refbar").hidden = true;
+    showBrowse(key, d.meta);
+    $("subbar").hidden = true;
+    $("champstrip").hidden = false;
     $("fYear").hidden = false;
     $("grid").classList.remove("refgrid");
-    setTab(key);
     setSortLabels(false);
     buildPanels(d.meta.tagGroups || []);
     resetFilters();
     buildIndex();
     buildSelects();
     renderPanels();
+    restoreFilters();
+    buildChampStrip();
     apply();
   }
 
@@ -464,6 +770,70 @@
     }
   }
 
+  // The champion strip is the fast lane: one row of avatars that scrolls
+  // sideways, multi-select like the panel, so a whole lane is two clicks.
+  function buildChampStrip() {
+    const host = $("champstrip");
+    host.innerHTML = "";
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "champchip all";
+    all.dataset.champ = "";
+    all.title = "All champions";
+    const allImg = document.createElement("span");
+    allImg.className = "cimg";
+    const allName = document.createElement("span");
+    allName.textContent = "All";
+    all.append(allImg, allName);
+    all.addEventListener("click", () => {
+      state.sel.champs.clear();
+      $(`scChamps`).textContent = "";
+      syncChampStrip();
+      if ($("fpChamps") && $("fpChamps").open) renderPanel("champs");
+      apply();
+    });
+    host.appendChild(all);
+
+    for (const it of state.items.champs || []) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "champchip";
+      b.dataset.champ = it.name;
+      b.title = `${it.name} (${it.count})`;
+      const wrap = document.createElement("span");
+      wrap.className = "cimg";
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.src = thumbAt(it.rec.t || it.rec.img, 120);
+      img.alt = it.name;
+      wrap.appendChild(img);
+      const nm = document.createElement("span");
+      nm.textContent = it.name;
+      b.append(wrap, nm);
+      b.addEventListener("click", () => toggleChamp(it.name));
+      host.appendChild(b);
+    }
+    syncChampStrip();
+  }
+
+  function toggleChamp(name) {
+    const sel = state.sel.champs;
+    if (sel.has(name)) sel.delete(name);
+    else sel.add(name);
+    const badge = $("scChamps");
+    if (badge) badge.textContent = sel.size ? `(${sel.size})` : "";
+    syncChampStrip();
+    if ($("fpChamps") && $("fpChamps").open) renderPanel("champs");
+    apply();
+  }
+
+  function syncChampStrip() {
+    for (const b of $("champstrip").querySelectorAll(".champchip")) {
+      const on = b.dataset.champ ? state.sel.champs.has(b.dataset.champ) : state.sel.champs.size === 0;
+      b.classList.toggle("on", on);
+    }
+  }
+
   // Panel searches accept several names at once, separated by commas:
   // "briar, lux" lists every champion matching either.
   const searchTokens = (kind) =>
@@ -572,6 +942,7 @@
     });
     state.sel[kind] = next;
     $(`sc${cap(kind)}`).textContent = next.size ? `(${next.size})` : "";
+    if (kind === "champs") syncChampStrip();
     // While the panel is collapsed to the selection, a deselected name has to
     // leave immediately, so rebuild the grid instead of only updating counts.
     if (state.onlySel[kind]) renderPanel(kind);
@@ -597,20 +968,93 @@
     }
   }
 
-  function hasActiveFilters() {
-    const searched = state.panels.some(
-      (p) => state.sel[p.kind].size > 0 || $(`ps${p.id}`).value.trim() !== ""
-    );
-    if (refmode()) {
-      return searched || state.refQuery.trim() !== "" || state.refSrc !== "" || $("fSort").value !== "new";
+  function activeFilterCount() {
+    let n = 0;
+    for (const p of state.panels) {
+      if (state.sel[p.kind].size) n++;
+      if ($(`ps${p.id}`) && $(`ps${p.id}`).value.trim()) n++;
     }
-    return searched || $("fYear").value !== "" || $("fSort").value !== "new";
+    if (state.query.trim()) n++;
+    if (refmode() && state.refSrc) n++;
+    if ($("fYear").value) n++;
+    if ($("fSort").value !== "new") n++;
+    return n;
+  }
+
+  function hasActiveFilters() {
+    return activeFilterCount() > 0;
   }
 
   // The clear button only exists while something is actually filtered, so it
   // cannot be clicked when there is nothing to reset.
   function syncClear() {
-    $("clearbtn").hidden = !hasActiveFilters();
+    const n = activeFilterCount();
+    const clear = $("clearbtn");
+    if (clear) clear.hidden = n === 0;
+    const badge = $("filterCount");
+    if (badge) {
+      badge.textContent = n;
+      badge.hidden = n === 0;
+    }
+    $("filterBtn").classList.toggle("has-filters", n > 0);
+    $("qClear").hidden = !state.query;
+  }
+
+  // Filters live in the URL too: ?game=lol&f=vibe:Cute|kind:Monster&q=star
+  // so a filtered view can be bookmarked or sent to someone.
+  let restoringFilters = false;
+
+  function writeFilterUrl() {
+    if (restoringFilters) return;
+    const p = new URLSearchParams(location.search);
+    const q = state.query.trim();
+    if (q) p.set("q", q);
+    else p.delete("q");
+    if (refmode() && state.refSrc) p.set("src", state.refSrc);
+    else p.delete("src");
+    const sort = $("fSort").value;
+    if (sort !== "new") p.set("sort", sort);
+    else p.delete("sort");
+    const year = $("fYear").value;
+    if (year) p.set("y", year);
+    else p.delete("y");
+    const picked = [];
+    for (const panel of state.panels) {
+      for (const value of state.sel[panel.kind]) picked.push(`${panel.kind}:${value}`);
+    }
+    if (picked.length) p.set("f", picked.join("|"));
+    else p.delete("f");
+    history.replaceState(null, "", `${location.pathname}?${p}`);
+  }
+
+  function restoreFilters() {
+    const p = new URLSearchParams(location.search);
+    restoringFilters = true;
+    const q = p.get("q");
+    if (q) {
+      state.query = q;
+      $("q").value = q;
+    }
+    const src = p.get("src");
+    if (src && refmode()) {
+      state.refSrc = src;
+      syncRefSources();
+    }
+    const sort = p.get("sort");
+    if (sort && $("fSort").querySelector(`option[value="${sort}"]`)) $("fSort").value = sort;
+    const year = p.get("y");
+    if (year && $("fYear").querySelector(`option[value="${year}"]`)) $("fYear").value = year;
+    const f = p.get("f");
+    if (f) {
+      for (const pair of f.split("|")) {
+        const cut = pair.indexOf(":");
+        if (cut < 0) continue;
+        const kind = pair.slice(0, cut);
+        const value = pair.slice(cut + 1);
+        if (state.sel[kind]) state.sel[kind].add(value);
+      }
+    }
+    restoringFilters = false;
   }
 
   function apply() {
@@ -618,15 +1062,18 @@
     if (refmode()) return applyRef();
     const year = $("fYear").value;
     const sort = $("fSort").value;
+    const words = state.query.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
     // Within a panel the values are alternatives (OR); across panels every
     // chosen panel has to match (AND), so Kind=Monster + Vibe=Cute works.
     let list = state.skins.filter((s) => {
+      if (s._dup) return false;
       for (const p of state.panels) {
         const sel = state.sel[p.kind];
         if (sel.size && !matches(s, p.kind, sel)) return false;
       }
       if (year && String(s._year) !== year) return false;
+      if (words.length && !words.every((w) => s._hay.includes(w))) return false;
       return true;
     });
 
@@ -654,13 +1101,17 @@
     const ep = empty.querySelector("p");
     if (ep) ep.textContent = "No skins match your filters.";
     more.hidden = true;
+    $("drawerApply").textContent = `Show ${list.length.toLocaleString()} ${list.length === 1 ? "result" : "results"}`;
+    writeFilterUrl();
     renderStep();
   }
 
-  // The board filters like the game tabs (panels AND, values OR) plus one
+  // The board filters like the game libraries (panels AND, values OR) plus one
   // free-text box over everything printed on the record, and a library chip.
+  // Film stills are grouped by film, so the wall reads as contact sheets and
+  // "newest first" means newest *film*, not the item with the most stills.
   function applyRef() {
-    const words = state.refQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const words = state.query.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const sort = $("fSort").value;
     const list = state.skins.filter((s) => {
       if (state.refSrc && s._src !== state.refSrc) return false;
@@ -671,23 +1122,59 @@
       return !words.length || words.every((w) => s._hay.includes(w));
     });
 
-    const year = (r) => (r._year == null ? -1 : r._year);
-    switch (sort) {
-      case "old": list.sort((a, b) => year(a) - year(b) || a._label.localeCompare(b._label)); break;
-      case "az": list.sort((a, b) => a._label.localeCompare(b._label) || a.ch.localeCompare(b.ch)); break;
-      case "za": list.sort((a, b) => b._label.localeCompare(a._label) || a.ch.localeCompare(b.ch)); break;
-      default: list.sort((a, b) => year(b) - year(a) || a._label.localeCompare(b._label));
+    const groups = new Map();
+    for (const s of list) {
+      const key = s._film || "paintings";
+      let group = groups.get(key);
+      if (!group) {
+        group = { film: s._film || null, items: [] };
+        groups.set(key, group);
+      }
+      group.items.push(s);
     }
+    const films = [...groups.values()].filter((g) => g.film);
+    const rest = [...groups.values()].filter((g) => !g.film);
+    const fy = (g) => {
+      const y = g.film ? yearOfText(g.film.y) : null;
+      return y == null ? null : y;
+    };
+    // Undated films go last in both directions rather than sorting as year 0.
+    const dated = films.filter((g) => fy(g) != null);
+    const undated = films.filter((g) => fy(g) == null);
+    switch (sort) {
+      case "old":
+        dated.sort((a, b) => fy(a) - fy(b) || a.film.t.localeCompare(b.film.t));
+        films.splice(0, films.length, ...dated, ...undated);
+        break;
+      case "az":
+        films.sort((a, b) => a.film.t.localeCompare(b.film.t));
+        break;
+      case "za":
+        films.sort((a, b) => b.film.t.localeCompare(a.film.t));
+        break;
+      default:
+        dated.sort((a, b) => fy(b) - fy(a) || a.film.t.localeCompare(b.film.t));
+        films.splice(0, films.length, ...dated, ...undated);
+    }
+    if (sort === "az" || sort === "za") {
+      rest.sort((a, b) => a.items[0]._label.localeCompare(b.items[0]._label) * (sort === "az" ? 1 : -1));
+    }
+    const ordered = [...films, ...rest];
+    state.refGroups = ordered;
+    const flat = ordered.flatMap((g) => g.items);
 
-    state.filtered = list;
-    state.refRows = layoutRows(list);
+    state.filtered = flat;
+    state.refRows = layoutRefRows(flat);
     state.shown = 0;
     grid.innerHTML = "";
     empty.hidden = list.length !== 0;
     const ep = empty.querySelector("p");
     if (ep) ep.textContent = "Nothing on the board matches that.";
     more.hidden = true;
-    $("refcount").textContent = `${list.length.toLocaleString()} reference${list.length === 1 ? "" : "s"}`;
+    $("refcount").textContent = `${flat.length.toLocaleString()} reference${flat.length === 1 ? "" : "s"}`;
+    $("refcount").hidden = !state.query.trim() && !state.refSrc;
+    $("drawerApply").textContent = `Show ${flat.length.toLocaleString()} ${flat.length === 1 ? "result" : "results"}`;
+    writeFilterUrl();
     renderStep();
   }
 
@@ -695,25 +1182,40 @@
   // the target height, then scaled to exactly fill the width. That keeps the
   // artwork's own ratios (a 2.39:1 frame stays wide) and gives the board its
   // edge-to-edge look without leaving a ragged bottom.
-  function layoutRows(list) {
+  function layoutRefRows(list) {
     const cs = getComputedStyle(grid);
     const width =
       grid.clientWidth - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0) || 1200;
-    const target = width < 700 ? ROW_TARGET_SMALL : ROW_TARGET;
+    const target =
+      width < 700
+        ? ROW_TARGET_SMALL
+        : state.density === "s"
+          ? 190
+          : state.density === "l"
+            ? 360
+            : ROW_TARGET;
     const rows = [];
     let i = 0;
     while (i < list.length) {
-      let sum = 0;
-      let j = i;
-      let h = target;
-      while (j < list.length) {
-        sum += list[j]._ar;
-        j++;
-        h = (width - ROW_GAP * (j - i - 1)) / sum;
-        if (h <= target) break;
+      const film = list[i]._film;
+      let count = 1;
+      while (i + count < list.length && list[i + count]._film === film) count++;
+      if (film) rows.push({ type: "head", rec: list[i], count });
+      let k = i;
+      while (k < i + count) {
+        let sum = 0;
+        let j = k;
+        let h = target;
+        while (j < i + count) {
+          sum += list[j]._ar;
+          j++;
+          h = (width - ROW_GAP * (j - k - 1)) / sum;
+          if (h <= target) break;
+        }
+        rows.push({ type: "row", start: k, end: j, h: Math.max(80, Math.min(h, target * 1.6)) });
+        k = j;
       }
-      rows.push({ start: i, end: j, h: Math.max(80, Math.min(h, target * 1.6)) });
-      i = j;
+      i += count;
     }
     return rows;
   }
@@ -739,6 +1241,10 @@
     const next = Math.min(rows.length, max);
     for (let i = state.shown; i < next; i++) {
       const row = rows[i];
+      if (row.type === "head") {
+        grid.appendChild(makeRefHead(row));
+        continue;
+      }
       const el = document.createElement("div");
       el.className = "rrow";
       el.style.height = row.h + "px";
@@ -805,9 +1311,12 @@
     name.textContent = `${rec.ch} - ${rec._label}`;
     const sub = document.createElement("span");
     sub.className = "sub";
-    sub.textContent = [(rec.set || []).join(", ") || "", (rec.art || [])[0] || ""].filter(Boolean).join(" · ");
+    const bits = [(rec.set || []).join(", ") || "", (rec.art || [])[0] || ""].filter(Boolean);
+    if (rec._dupCount) bits.push(`Shared by ${rec._dupCount + 1} skins`);
+    sub.textContent = bits.join(" · ");
     meta.append(name, sub);
     card.appendChild(meta);
+    card.appendChild(buildSaveButton(rec));
 
     card.addEventListener("click", () => openLightbox(idx));
     card.addEventListener("mousedown", (e) => {
@@ -820,6 +1329,20 @@
       window.open(rec.img, "_blank", "noopener");
     });
     return card;
+  }
+
+  function makeRefHead(row) {
+    const f = row.rec._film;
+    const el = document.createElement("div");
+    el.className = "rgroup";
+    const title = document.createElement("h3");
+    title.textContent = f.t;
+    const meta = document.createElement("span");
+    meta.textContent = [f.y, (f.dir || [])[0], `${row.count} still${row.count === 1 ? "" : "s"}`]
+      .filter(Boolean)
+      .join("  ·  ");
+    el.append(title, meta);
+    return el;
   }
 
   // A board tile: no chrome, no caption until hovered.
@@ -848,8 +1371,13 @@
     sub.textContent = f
       ? [rec.tags.director[0], f.y].filter(Boolean).join(" · ")
       : [rec._item.cr, rec._item.y, rec._item.tag].filter(Boolean).join(" · ");
-    ov.append(t, sub);
-    card.appendChild(ov);
+    // Film stills need no per-tile caption: the group header above them already
+    // names the film, the year and the director.
+    if (!f) {
+      ov.append(t, sub);
+      card.appendChild(ov);
+    }
+    card.appendChild(buildSaveButton(rec));
 
     card.addEventListener("click", () => openLightbox(idx));
     card.addEventListener("mousedown", (e) => {
@@ -878,7 +1406,6 @@
       bar.classList.remove("active");
       img.hidden = true;
       img.removeAttribute("src");
-      lbLensImg.removeAttribute("src");
       noArt.hidden = false;
       return;
     }
@@ -891,7 +1418,8 @@
       bar.classList.add("done");
       setTimeout(() => bar.classList.remove("active", "done"), 2000);
       img.src = full.src;
-      lbLensImg.src = full.src;
+      resetZoom();
+      resetZoom();
     };
     full.onerror = () => bar.classList.remove("active");
 
@@ -901,6 +1429,32 @@
 
   // Images open in place and leave the URL alone; stepping keeps lightbox focus.
   let lastFocus = null;
+
+  // Metadata is grouped so the eye can scan it: identity, artwork, dates.
+  function renderInfo(info, groups) {
+    info.innerHTML = "";
+    for (const [title, rows] of groups) {
+      const visible = rows.filter(([, v]) => v);
+      if (!visible.length) continue;
+      const head = document.createElement("dt");
+      head.className = "lb-sec";
+      head.textContent = title;
+      info.appendChild(head);
+      for (const [k, v] of visible) {
+        const dd = document.createElement("dd");
+        dd.textContent = v;
+        if (!k) {
+          dd.style.gridColumn = "1 / -1";
+        } else {
+          const dt = document.createElement("dt");
+          dt.textContent = k;
+          info.appendChild(dt);
+        }
+        if (k === "Resolution") dd.id = "lbRes";
+        info.appendChild(dd);
+      }
+    }
+  }
 
   function openLightbox(idx) {
     state.lbIdx = idx;
@@ -913,32 +1467,40 @@
 
     $("lbName").textContent = `${rec.ch} - ${label}`;
     $("lbChamp").textContent = rec.ch;
-    $("lbPos").textContent = `${idx + 1} of ${state.filtered.length}`;
+    $("lbPos").textContent = `${idx + 1} / ${state.filtered.length.toLocaleString()}`;
 
     const info = $("lbInfo");
-    info.innerHTML = "";
     const t = rec.tags || {};
-    const rows = [
-      ["Vibes", (t.vibe || []).join(", ")],
-      ["Kind", (t.kind || []).join(", ")],
-      ["Species", (t.species || []).join(", ")],
-      ["Gender", (t.gender || []).join(", ")],
-      ["Region", (t.region || []).join(", ")],
-      ["Class", (t.class || []).join(", ")],
-      ["Themes", (rec.set || []).join(", ")],
-      ["Artists", (rec.art || []).join(", ")],
-      ["Artwork date", rec.d],
-      ["Release date", rec.r],
-      ["Chromas", rec.cr > 0 ? `${rec.cr} chromas` : "None"],
-      ["Resolution", resText(rec) ? `${resText(rec)} px` : ""],
-    ];
-    for (const [k, v] of rows) {
-      if (!v) continue;
-      const dt = document.createElement("dt"); dt.textContent = k;
-      const dd = document.createElement("dd"); dd.textContent = v;
-      if (k === "Resolution") dd.id = "lbRes";
-      info.append(dt, dd);
-    }
+    renderInfo(info, [
+      [
+        "Champion",
+        [
+          ["Kind", (t.kind || []).join(", ")],
+          ["Species", (t.species || []).join(", ")],
+          ["Gender", (t.gender || []).join(", ")],
+          ["Region", (t.region || []).join(", ")],
+          ["Class", (t.class || []).join(", ")],
+        ],
+      ],
+      [
+        "Artwork",
+        [
+          ["Vibes", (t.vibe || []).join(", ")],
+          ["Themes", (rec.set || []).join(", ")],
+          ["Artists", (rec.art || []).join(", ")],
+          ["Chromas", rec.cr > 0 ? `${rec.cr} chromas` : "None"],
+          ["Also used by", rec._also ? rec._also.map((r) => `${r._label} (${r.ch})`).join(", ") : ""],
+        ],
+      ],
+      [
+        "Dates",
+        [
+          ["Artwork", rec.d],
+          ["Release", rec.r],
+          ["Resolution", resText(rec) ? `${resText(rec)} px` : ""],
+        ],
+      ],
+    ]);
 
     // The side panel always starts on the newest artwork, so the highlighted
     // version button and the loaded image cannot drift apart.
@@ -948,6 +1510,8 @@
     $("lbStage").scrollTop = 0;
 
     renderVersions(rec);
+    renderNearby(idx);
+    syncLbSave(rec);
 
     lb.hidden = false;
     document.body.style.overflow = "hidden";
@@ -962,39 +1526,51 @@
     const tg = rec.tags || {};
     $("lbName").textContent = rec._label;
     $("lbChamp").textContent = (tg.director || []).join(", ") || (tg.artist || []).join(", ");
-    $("lbPos").textContent = `${idx + 1} of ${state.filtered.length}`;
+    $("lbPos").textContent = `${idx + 1} / ${state.filtered.length.toLocaleString()}`;
 
     const info = $("lbInfo");
-    info.innerHTML = "";
-    const rows = f
+    const groups = f
       ? [
-          ["Director", (tg.director || []).join(", ")],
-          ["Cinematography", (tg.cinematographer || []).join(", ")],
-          ["Production design", (tg.designer || []).join(", ")],
-          ["Genre", (tg.genre || []).join(", ")],
-          ["Country", (tg.country || []).join(", ")],
-          ["Year", f.y],
-          ["Aspect ratio", f.ar],
-          ["Scene", (tg.scene || []).join(", ")],
-          ["Light", (tg.atmosphere || []).join(", ")],
-          ["Mood", (tg.mood || []).join(", ")],
+          [
+            "Film",
+            [
+              ["Director", (tg.director || []).join(", ")],
+              ["Cinematography", (tg.cinematographer || []).join(", ")],
+              ["Production design", (tg.designer || []).join(", ")],
+              ["Genre", (tg.genre || []).join(", ")],
+              ["Country", (tg.country || []).join(", ")],
+              ["Year", f.y],
+              ["Aspect", f.ar],
+            ],
+          ],
+          [
+            "Scene",
+            [
+              ["Place", (tg.scene || []).join(", ")],
+              ["Light", (tg.atmosphere || []).join(", ")],
+              ["Mood", (tg.mood || []).join(", ")],
+            ],
+          ],
         ]
       : [
-          ["Artist", (tg.artist || []).join(", ")],
-          ["Movement", (tg.movement || []).join(", ")],
-          ["Year", rec._item.y],
-          ["Scene", (tg.scene || []).join(", ")],
-          ["Mood", (tg.mood || []).join(", ")],
+          [
+            "Artwork",
+            [
+              ["Artist", (tg.artist || []).join(", ")],
+              ["Movement", (tg.movement || []).join(", ")],
+              ["Year", rec._item.y],
+            ],
+          ],
+          [
+            "Scene",
+            [
+              ["Place", (tg.scene || []).join(", ")],
+              ["Mood", (tg.mood || []).join(", ")],
+            ],
+          ],
         ];
-    if (rec._item.cap) rows.push(["Caption", rec._item.cap]);
-    for (const [k, v] of rows) {
-      if (!v) continue;
-      const dt = document.createElement("dt");
-      dt.textContent = k;
-      const dd = document.createElement("dd");
-      dd.textContent = v;
-      info.append(dt, dd);
-    }
+    if (rec._item.cap) groups.push(["Caption", [["", rec._item.cap]]]);
+    renderInfo(info, groups);
     if (rec._page) {
       const dt = document.createElement("dt");
       dt.textContent = "Source";
@@ -1013,11 +1589,47 @@
     $("lbImgWrap").scrollTop = 0;
     $("lbStage").scrollTop = 0;
     renderVersions(rec);
+    renderNearby(idx);
+    syncLbSave(rec);
 
     lb.hidden = false;
     document.body.style.overflow = "hidden";
     writeUrl(null, null);
     if (wasHidden) $("lbClose").focus();
+  }
+
+  function renderNearby(idx) {
+    const host = $("lbNear");
+    host.innerHTML = "";
+    const total = state.filtered.length;
+    if (total < 2) {
+      $("lbNearSec").hidden = true;
+      return;
+    }
+    $("lbNearSec").hidden = false;
+    const start = Math.max(0, idx - 2);
+    const end = Math.min(total, idx + 3);
+    for (let i = start; i < end; i++) {
+      const rec = state.filtered[i];
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "near" + (i === idx ? " on" : "");
+      b.title = rec._label;
+      const img = document.createElement("img");
+      img.src = thumbAt(rec.t || rec.img, 300);
+      img.alt = rec._label;
+      b.appendChild(img);
+      b.addEventListener("click", () => openLightbox(i));
+      host.appendChild(b);
+    }
+  }
+
+  function syncLbSave(rec) {
+    const on = onBoard(rec._key);
+    const btn = $("lbSave");
+    btn.classList.toggle("on", on);
+    btn.textContent = on ? "Saved" : "Save";
+    btn.setAttribute("aria-pressed", String(on));
   }
 
   function renderVersions(rec) {
@@ -1070,6 +1682,7 @@
     lb.hidden = true;
     document.body.style.overflow = "";
     state.lbIdx = -1;
+    resetZoom();
     writeUrl(null);
     if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
     lastFocus = null;
@@ -1139,6 +1752,24 @@
   }
 
   $("lbClose").addEventListener("click", closeLightbox);
+  $("lbOpen").addEventListener("click", () => {
+    if (curFull) window.open(curFull, "_blank", "noopener");
+  });
+  $("lbSave").addEventListener("click", () => {
+    const rec = state.filtered[state.lbIdx];
+    if (!rec) return;
+    toggleSave(rec, null);
+    syncLbSave(rec);
+  });
+  $("lbCopy").addEventListener("click", async () => {
+    if (!curFull) return;
+    try {
+      await navigator.clipboard.writeText(curFull);
+      toast("Image link copied");
+    } catch {
+      toast("Could not copy the link");
+    }
+  });
   $("lbPrev").addEventListener("click", () => step(-1));
   $("lbNext").addEventListener("click", () => step(1));
   lb.addEventListener("click", (e) => { if (e.target === lb) closeLightbox(); });
@@ -1163,6 +1794,14 @@
     if (e.key === "Escape") closeLightbox();
     else if (e.key === "ArrowLeft") step(-1);
     else if (e.key === "ArrowRight") step(1);
+    else if (e.key === "i" || e.key === "I") $("lbInfoBtn").click();
+    else if (e.key === "s" || e.key === "S") {
+      const rec = state.filtered[state.lbIdx];
+      if (rec) {
+        toggleSave(rec, null);
+        syncLbSave(rec);
+      }
+    }
     else if (e.key === "Tab") trapTab(e);
   });
 
@@ -1171,43 +1810,196 @@
     resetPanels();
     $("fYear").value = "";
     $("fSort").value = "new";
-    if (refmode()) {
-      $("refq").value = "";
-      state.refQuery = "";
-      state.refSrc = "";
-      syncRefSources();
-    }
+    state.query = "";
+    $("q").value = "";
+    state.refSrc = "";
+    if (refmode()) syncRefSources();
+    syncChampStrip();
     renderPanels();
     apply();
   });
 
-  // The board's search is one text box over every printed field, so "rogers
-  // night" finds a Deakins film and "monet" finds the paintings. Re-filtering
-  // 40k records per keystroke is cheap; rebuilding the rows is not, hence the
-  // frame throttle.
-  let refSearchRaf = 0;
-  $("refq").addEventListener("input", () => {
-    state.refQuery = $("refq").value;
-    if (refSearchRaf) return;
-    refSearchRaf = requestAnimationFrame(() => {
-      refSearchRaf = 0;
+  // One search box over every printed field: champion, skin, theme, artist,
+  // crew, place, mood, caption. Re-filtering 35k records is cheap; rebuilding
+  // the rows is not, hence the frame throttle.
+  let searchRaf = 0;
+  $("q").addEventListener("input", () => {
+    state.query = $("q").value;
+    if (searchRaf) return;
+    searchRaf = requestAnimationFrame(() => {
+      searchRaf = 0;
+      syncClear();
       apply();
     });
   });
+  $("qClear").addEventListener("click", () => {
+    state.query = "";
+    $("q").value = "";
+    $("q").focus();
+    syncClear();
+    apply();
+  });
 
-  const sb = $("sidebar");
-  const sbToggle = $("sbToggle");
-  const sbOverlay = $("sbOverlay");
-  function setSb(open) {
-    sb.classList.toggle("open", open);
-    document.body.classList.toggle("sbdim", open);
-    sbOverlay.hidden = !open;
-    sbToggle.setAttribute("aria-expanded", String(open));
+  // --- Drawer -------------------------------------------------------------
+  const drawer = $("drawer");
+  const scrim = $("scrim");
+  let drawerTimer = 0;
+
+  function openDrawer() {
+    clearTimeout(drawerTimer);
+    drawer.classList.add("open");
+    drawer.setAttribute("aria-hidden", "false");
+    $("filterBtn").setAttribute("aria-expanded", "true");
+    scrim.hidden = false;
+    requestAnimationFrame(() => scrim.classList.add("on"));
+    document.body.classList.add("locked");
   }
-  sbToggle.addEventListener("click", () => setSb(!sb.classList.contains("open")));
-  sbOverlay.addEventListener("click", () => setSb(false));
-  sbToggle.setAttribute("aria-expanded", "false");
-  const onResize = () => { if (window.innerWidth > 980) setSb(false); };
+
+  function closeDrawer() {
+    clearTimeout(drawerTimer);
+    drawer.classList.remove("open");
+    drawer.setAttribute("aria-hidden", "true");
+    $("filterBtn").setAttribute("aria-expanded", "false");
+    scrim.classList.remove("on");
+    document.body.classList.remove("locked");
+    drawerTimer = setTimeout(() => { scrim.hidden = true; }, 260);
+  }
+
+  function syncDrawerState() {
+    if (state.view !== "browse") closeDrawer();
+  }
+
+  $("filterBtn").addEventListener("click", () => {
+    if (drawer.classList.contains("open")) closeDrawer();
+    else openDrawer();
+  });
+  $("drawerClose").addEventListener("click", closeDrawer);
+  $("drawerApply").addEventListener("click", closeDrawer);
+  scrim.addEventListener("click", () => {
+    closeDrawer();
+    closeBoard();
+  });
+
+  // --- Board panel ---------------------------------------------------------
+  const board = $("board");
+
+  function openBoard() {
+    if (drawer.classList.contains("open")) closeDrawer();
+    renderBoard();
+    board.classList.add("open");
+    board.setAttribute("aria-hidden", "false");
+    $("boardBtn").setAttribute("aria-expanded", "true");
+  }
+
+  function closeBoard() {
+    board.classList.remove("open");
+    board.setAttribute("aria-hidden", "true");
+    $("boardBtn").setAttribute("aria-expanded", "false");
+  }
+
+  // The board is not modal: you keep saving while it is open. Clicking the
+  // library behind it closes it.
+  document.addEventListener("pointerdown", (e) => {
+    if (!board.classList.contains("open")) return;
+    if (board.contains(e.target) || $("boardBtn").contains(e.target)) return;
+    closeBoard();
+  });
+
+  $("boardBtn").addEventListener("click", () => {
+    if (board.classList.contains("open")) closeBoard();
+    else openBoard();
+  });
+  $("boardClose").addEventListener("click", closeBoard);
+  $("boardClear").addEventListener("click", () => {
+    if (!state.board.length) return;
+    state.board = [];
+    persistBoard();
+    renderBoard();
+  });
+  $("boardCopy").addEventListener("click", async () => {
+    if (!state.board.length) return;
+    try {
+      await navigator.clipboard.writeText(state.board.map((e) => e.img).join("\n"));
+      toast(`${state.board.length} link${state.board.length === 1 ? "" : "s"} copied`);
+    } catch {
+      toast("Could not copy the links");
+    }
+  });
+
+  $("density").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-density]");
+    if (!b || b.dataset.density === state.density) return;
+    state.density = b.dataset.density;
+    applyDensity();
+  });
+  $("emptyClear").addEventListener("click", () => $("clearbtn").click());
+
+  document.addEventListener("keydown", (e) => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    if (e.key === "/" && !typing && state.view === "browse") {
+      e.preventDefault();
+      $("q").focus();
+    }
+    if ((e.key === "b" || e.key === "B") && !typing && state.view === "browse") {
+      e.preventDefault();
+      if (board.classList.contains("open")) closeBoard();
+      else openBoard();
+    }
+    if (e.key === "Escape" && lb.hidden) {
+      if (drawer.classList.contains("open")) closeDrawer();
+      if (board.classList.contains("open")) closeBoard();
+    }
+  });
+
+  // Tile density from the last session.
+  for (const b of $("density").children) b.classList.toggle("on", b.dataset.density === state.density);
+  grid.classList.add("d-" + state.density);
+  syncBoard();
+
+  // --- Home / browse ------------------------------------------------------
+  const cards = $("libCards");
+  for (const lib of LIBRARIES) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "libcard";
+    b.dataset.lib = lib.id;
+    const img = document.createElement("img");
+    img.src = lib.cover.replace(/\/1200px-/, "/800px-");
+    img.alt = "";
+    img.loading = "lazy";
+    const meta = document.createElement("span");
+    meta.className = "libmeta";
+    const left = document.createElement("span");
+    const name = document.createElement("span");
+    name.className = "libname";
+    name.textContent = lib.name;
+    left.append(name);
+    const count = document.createElement("span");
+    count.className = "libcount";
+    count.textContent = lib.count.toLocaleString();
+    meta.append(left, count);
+    const go = document.createElement("span");
+    go.className = "libgo";
+    go.textContent = "\u2197";
+    b.append(img, meta, go);
+    cards.appendChild(b);
+  }
+
+  for (const b of document.querySelectorAll("[data-lib]")) {
+    b.addEventListener("click", () => openLibrary(b.dataset.lib));
+  }
+  $("backHome").addEventListener("click", goHome);
+
+  const lbInfoBtn = $("lbInfoBtn");
+  lbInfoBtn.addEventListener("click", () => {
+    const collapsed = $("lbMeta").classList.toggle("collapsed");
+    lbInfoBtn.setAttribute("aria-pressed", String(!collapsed));
+    lbInfoBtn.textContent = collapsed ? "Details" : "Hide details";
+  });
+
+  const onResize = () => {
+    if (window.innerWidth > 860) closeDrawer();
+  };
   window.addEventListener("resize", onResize);
   onResize();
 
@@ -1219,7 +2011,7 @@
     clearTimeout(refResizeTimer);
     refResizeTimer = setTimeout(() => {
       const keep = state.shown;
-      state.refRows = layoutRows(state.filtered);
+      state.refRows = layoutRefRows(state.filtered);
       state.shown = 0;
       grid.innerHTML = "";
       renderRefRows(Math.min(keep, state.refRows.length));
@@ -1231,55 +2023,94 @@
   more.addEventListener("click", renderStep);
 
   const lbImg = $("lbImg");
-  function magUpdate(e) {
-    if (!lbDown) return;
-    const box = lbImg.getBoundingClientRect();
-    const mx = e.clientX - box.left;
-    const my = e.clientY - box.top;
-    if (mx < 0 || mx > box.width || my < 0 || my > box.height) {
-      lbDown = false;
-      lbLens.classList.remove("on");
-      return;
-    }
-    const offX = mx * magZoom;
-    const offY = my * magZoom;
-    lbLensImg.style.width = (box.width * magZoom) + "px";
-    lbLensImg.style.height = (box.height * magZoom) + "px";
-    lbLensImg.style.left = (MAG_SIZE / 2 - offX) + "px";
-    lbLensImg.style.top = (MAG_SIZE / 2 - offY) + "px";
-    lbLens.style.left = (e.clientX - MAG_SIZE / 2) + "px";
-    lbLens.style.top = (e.clientY - MAG_SIZE / 2) + "px";
+  const lbImgWrap = $("lbImgWrap");
+
+  function clampPan() {
+    const box = lbImgWrap.getBoundingClientRect();
+    const mx = ((zoom - 1) * box.width) / 2;
+    const my = ((zoom - 1) * box.height) / 2;
+    panX = Math.max(-mx, Math.min(mx, panX));
+    panY = Math.max(-my, Math.min(my, panY));
   }
-  lbImg.addEventListener("mousedown", (e) => {
-    if (lb.hidden) return;
-    if (e.button === 1) {
-      e.preventDefault();
-      return;
+
+  function applyZoom() {
+    lbImg.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+    lbImg.classList.toggle("zoomed", zoom > 1);
+    lbImg.classList.toggle("dragging", panning);
+    const readout = $("lbZoom");
+    readout.hidden = !lbImg.getAttribute("src");
+    readout.textContent = zoom > 1 ? `${Math.round(zoom * 100)}%  ·  drag to pan` : "100%  ·  scroll to zoom";
+  }
+
+  function resetZoom() {
+    zoom = 1;
+    panX = 0;
+    panY = 0;
+    panning = false;
+    applyZoom();
+  }
+
+  function zoomAt(clientX, clientY, factor) {
+    const box = lbImgWrap.getBoundingClientRect();
+    const cx = clientX - (box.left + box.width / 2);
+    const cy = clientY - (box.top + box.height / 2);
+    const next = Math.min(8, Math.max(1, zoom * factor));
+    if (next === zoom) return;
+    panX = cx - (cx - panX) * (next / zoom);
+    panY = cy - (cy - panY) * (next / zoom);
+    zoom = next;
+    if (zoom === 1) {
+      panX = 0;
+      panY = 0;
     }
+    clampPan();
+    applyZoom();
+  }
+
+  lbImgWrap.addEventListener(
+    "wheel",
+    (e) => {
+      if (lb.hidden || !lbImg.getAttribute("src")) return;
+      e.preventDefault();
+      zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.18 : 1 / 1.18);
+    },
+    { passive: false },
+  );
+
+  lbImg.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
-    const src = lbImg.getAttribute("src");
-    if (!src) return;
+    if (zoom <= 1) return;
     e.preventDefault();
-    lbDown = true;
-    lbLens.style.width = MAG_SIZE + "px";
-    lbLens.style.height = MAG_SIZE + "px";
-    lbLensImg.src = src;
-    magUpdate(e);
-    lbLens.classList.add("on");
+    panning = true;
+    panFromX = e.clientX;
+    panFromY = e.clientY;
+    lbImg.setPointerCapture(e.pointerId);
+    applyZoom();
   });
-  document.addEventListener("mousemove", magUpdate);
-  document.addEventListener("mouseup", () => {
-    lbDown = false;
-    lbLens.classList.remove("on");
+
+  lbImg.addEventListener("pointermove", (e) => {
+    if (!panning) return;
+    panX += e.clientX - panFromX;
+    panY += e.clientY - panFromY;
+    panFromX = e.clientX;
+    panFromY = e.clientY;
+    clampPan();
+    applyZoom();
   });
-  document.addEventListener("wheel", (e) => {
-    if (lb.hidden || !lbDown) return;
-    const box = lbImg.getBoundingClientRect();
-    if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) return;
-    e.preventDefault();
-    magZoom = Math.max(1, magZoom + (e.deltaY > 0 ? -0.15 : 0.15));
-    magUpdate(e);
-  }, { passive: false });
+
+  const endPan = () => {
+    if (!panning) return;
+    panning = false;
+    applyZoom();
+  };
+  lbImg.addEventListener("pointerup", endPan);
+  lbImg.addEventListener("pointercancel", endPan);
+
+  lbImg.addEventListener("dblclick", (e) => {
+    if (lb.hidden || !lbImg.getAttribute("src")) return;
+    if (zoom > 1) resetZoom();
+    else zoomAt(e.clientX, e.clientY, 2.5);
+  });
 
   lbImg.addEventListener("auxclick", (e) => {
     if (e.button !== 1 || lb.hidden || !curFull) return;
@@ -1287,16 +2118,13 @@
     window.open(curFull, "_blank", "noopener");
   });
 
-  $("gametabs").addEventListener("click", (e) => {
-    const tab = e.target.closest(".gtab");
-    if (!tab || tab.dataset.game === state.game) return;
-    load(tab.dataset.game)
-      .then(() => writeUrl(null))
-      .catch((err) => toast("Failed to load data: " + err.message));
-  });
-
-  const startGame = readUrl().game || DEFAULT_GAME;
-  load(startGame)
-    .then(syncUrl)
-    .catch((e) => { toast("Failed to load data: " + e.message); });
+  // Deep link: ?game=wr&champ=Jinx&skin=Project lands straight in that library.
+  const start = readUrl().game;
+  if (start) {
+    load(start)
+      .then(syncUrl)
+      .catch((e) => { toast("Failed to load data: " + e.message); });
+  } else {
+    state.view = "home";
+  }
 })();

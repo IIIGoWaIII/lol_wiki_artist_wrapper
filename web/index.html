@@ -3,78 +3,142 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Filterable gallery of League of Legends, Wild Rift and Legends of Runeterra splash art, with full-resolution originals and older artwork versions.">
-<title>LoL Splash Reference</title>
+<meta name="description" content="Every League of Legends, Wild Rift and Legends of Runeterra splash, plus a film and painting reference board. Filter by champion, theme, artist, place, light and mood, then pull the originals straight into PureRef.">
+<meta name="theme-color" content="#08080a">
+<title>Splash Reference</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<button id="sbToggle" aria-label="Toggle filters">&#9776;</button>
-<div id="sbOverlay" hidden></div>
-<div class="layout">
-  <aside id="sidebar">
-    <section id="filters">
-      <button id="clearbtn" title="Clear filters" hidden>Clear</button>
-      <!-- Panels are rendered from the catalogue's meta.tagGroups; see app.js. -->
-      <div id="panels"></div>
 
-      <div class="selrow">
-        <select id="fYear" title="Release year"><option value="">Any year</option></select>
-        <select id="fSort" title="Sort">
-          <option value="new">Newest first</option>
-          <option value="old">Oldest first</option>
-          <option value="az">Champion A&rarr;Z</option>
-          <option value="za">Champion Z&rarr;A</option>
-        </select>
-      </div>
-    </section>
-  </aside>
+<!-- Home ------------------------------------------------------------------ -->
+<div id="home">
+  <header class="masthead">
+    <span class="wordmark">Splash<span>Reference</span></span>
+  </header>
 
-  <div class="content">
-    <!-- One sticky header: the tabs plus, in the Reference tab, the board's
-         search field and library chips. -->
-    <header id="topbar">
-      <nav id="gametabs" role="tablist" aria-label="Game">
-        <button class="gtab on" data-game="lol" role="tab" aria-selected="true">League of Legends</button>
-        <button class="gtab" data-game="wr" role="tab" aria-selected="false">Wild Rift</button>
-        <button class="gtab" data-game="lor" role="tab" aria-selected="false">Legends of Runeterra</button>
-        <button class="gtab" data-game="ref" role="tab" aria-selected="false">Reference</button>
-      </nav>
-
-      <div id="refbar" hidden>
-        <div class="refsearch">
-          <input id="refq" type="search" autocomplete="off" spellcheck="false"
-            placeholder="Search films, directors, artists, movements…" aria-label="Search the reference board">
-        </div>
-        <div id="refsrc" role="group" aria-label="Library"></div>
-        <span id="refcount" aria-live="polite"></span>
-      </div>
-    </header>
-
-    <main id="grid"></main>
-
-    <div id="empty" hidden>
-      <p>No skins match your filters.</p>
+  <main class="chooser">
+    <div class="chooser-head">
+      <h1>Choose a library</h1>
     </div>
-    <button id="more" hidden>Show more</button>
-  </div>
+    <div class="cards" id="libCards"></div>
+  </main>
 </div>
 
+<!-- Browse ---------------------------------------------------------------- -->
+<div id="browse" hidden>
+  <header id="topbar">
+    <button type="button" id="backHome" class="icon-btn" title="Back to libraries" aria-label="Back to libraries">&#8592;</button>
+    <div class="lib-id">
+      <span id="libName">League of Legends</span>
+      <span id="libCount"></span>
+    </div>
+    <div class="searchwrap">
+      <svg class="searchglyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+      <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Search art, champions, artists…" aria-label="Search">
+      <button type="button" id="qClear" class="qclear" hidden aria-label="Clear search">&#215;</button>
+    </div>
+    <select id="fSort" title="Sort" aria-label="Sort">
+      <option value="new">Newest first</option>
+      <option value="old">Oldest first</option>
+      <option value="az">Title A&rarr;Z</option>
+      <option value="za">Title Z&rarr;A</option>
+    </select>
+    <div id="density" role="group" aria-label="Tile size">
+      <button type="button" data-density="s" title="Small tiles">S</button>
+      <button type="button" data-density="m" class="on" title="Medium tiles">M</button>
+      <button type="button" data-density="l" title="Large tiles">L</button>
+    </div>
+    <button type="button" id="boardBtn" class="filter-btn" aria-expanded="false" aria-controls="board">
+      Board <span id="boardBadge" hidden>0</span>
+    </button>
+    <button type="button" id="filterBtn" class="filter-btn" aria-expanded="false" aria-controls="drawer">
+      Filters <span id="filterCount" hidden></span>
+    </button>
+  </header>
+
+  <div id="subbar" hidden>
+    <div id="refsrc" role="group" aria-label="Library"></div>
+    <span id="refcount" aria-live="polite"></span>
+  </div>
+
+  <div id="champstrip" hidden aria-label="Champions"></div>
+
+  <main id="grid"></main>
+
+  <div id="empty" hidden>
+    <p>No skins match your filters.</p>
+    <button type="button" id="emptyClear">Clear filters</button>
+  </div>
+  <button id="more" hidden>Show more</button>
+</div>
+
+<!-- Filter drawer --------------------------------------------------------- -->
+<div id="scrim" hidden></div>
+<aside id="drawer" aria-hidden="true" aria-label="Filters">
+  <div class="drawer-head">
+    <h2>Filters</h2>
+    <div class="drawer-actions">
+      <button type="button" id="clearbtn" hidden>Clear all</button>
+      <button type="button" id="drawerClose" class="icon-btn" aria-label="Close filters">&#215;</button>
+    </div>
+  </div>
+  <div id="drawerBody">
+    <div id="panels"></div>
+    <div class="selrow">
+      <label class="yearwrap">
+        <span>Release year</span>
+        <select id="fYear"><option value="">Any year</option></select>
+      </label>
+    </div>
+  </div>
+  <div class="drawer-foot">
+    <button type="button" id="drawerApply">Show results</button>
+  </div>
+</aside>
+
+<!-- Board (saved references) ---------------------------------------------- -->
+<aside id="board" aria-hidden="true" aria-label="Board">
+  <div class="drawer-head">
+    <h2>Board <span id="boardCount"></span></h2>
+    <div class="drawer-actions">
+      <button type="button" id="boardCopy" hidden>Copy links</button>
+      <button type="button" id="boardClear" hidden>Clear</button>
+      <button type="button" id="boardClose" class="icon-btn" aria-label="Close board">&#215;</button>
+    </div>
+  </div>
+  <div id="boardBody"></div>
+</aside>
+
+<!-- Lightbox -------------------------------------------------------------- -->
 <div id="lb" hidden role="dialog" aria-modal="true" aria-labelledby="lbName">
   <div id="lbStage">
-    <button id="lbClose" title="Close (Esc)">&times;</button>
-    <button id="lbPrev" title="Previous (&larr;)">&#8249;</button>
-    <div id="lbImgWrap"><div id="lbLoadBar"></div><img id="lbImg" alt="Splash art" draggable="false"><div id="lbNoArt" hidden>No artwork on the wiki for this skin.</div><div id="lbLens"><img id="lbLensImg" alt=""></div></div>
-    <button id="lbNext" title="Next (&rarr;)">&#8250;</button>
+    <button id="lbClose" title="Close (Esc)" aria-label="Close">&#215;</button>
+    <button id="lbInfoBtn" class="lb-info-btn" aria-pressed="true" title="Show or hide the details panel">Details</button>
+    <button id="lbPrev" title="Previous (&larr;)" aria-label="Previous">&#8249;</button>
+    <div id="lbImgWrap"><div id="lbLoadBar"></div><img id="lbImg" alt="Splash art" draggable="false"><div id="lbNoArt" hidden>No artwork on the wiki for this skin.</div></div>
+    <div id="lbZoom" hidden></div>
+    <button id="lbNext" title="Next (&rarr;)" aria-label="Next">&#8250;</button>
   </div>
   <aside id="lbMeta">
-    <h2 id="lbName"></h2>
+    <div class="lb-head">
+      <h2 id="lbName"></h2>
+    </div>
     <div id="lbChamp"></div>
     <div id="lbPos"></div>
     <dl id="lbInfo"></dl>
     <div id="lbVers" hidden>
       <h3>Other versions</h3>
       <div id="lbVersGrid"></div>
+    </div>
+    <div id="lbNearSec" hidden>
+      <h3>Nearby</h3>
+      <div id="lbNear"></div>
+    </div>
+    <div class="lb-actions">
+      <button type="button" id="lbOpen" class="lb-primary">Open original</button>
+      <button type="button" id="lbSave" class="lb-ghost">Save</button>
+      <button type="button" id="lbCopy" class="lb-ghost">Copy link</button>
     </div>
   </aside>
 </div>
