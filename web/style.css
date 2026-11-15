@@ -813,27 +813,28 @@ a { color: inherit; }
   place-items: center;
   padding: 34px 56px;
   min-width: 0;
+  /* The stage is the viewport for a zoomed splash: the art may grow into the
+     letterbox and is clipped at the stage edge, never at its own 100% box. */
+  overflow: clip;
 }
 #lbImgWrap {
   max-width: 100%;
   max-height: 100%;
-  overflow: auto;
   position: relative;
-  scrollbar-width: none;
 }
-#lbImgWrap::-webkit-scrollbar { display: none; }
 #lbImg {
   max-width: 100%;
   max-height: 100%;
   border-radius: 3px;
   box-shadow: 0 30px 120px rgba(0, 0, 0, 0.75);
   transform-origin: center center;
-  cursor: zoom-in;
   user-select: none;
   touch-action: none;
 }
 #lbImg.zoomed { cursor: grab; }
 #lbImg.dragging { cursor: grabbing; }
+/* Promotion is only worth its memory while a gesture is moving the picture. */
+#lbImg.animating { will-change: transform; }
 #lbZoom {
   position: absolute;
   left: 50%;

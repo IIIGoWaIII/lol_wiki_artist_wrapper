@@ -123,10 +123,8 @@
   const BOOKMARK =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 4h9.6A1.2 1.2 0 0 1 18 5.2V20l-6-4.2L6 20V5.2A1.2 1.2 0 0 1 7.2 4z"/></svg>';
 
-  // Zoom-and-pan viewer state: scale plus a screen-pixel offset.
-  let zoom = 1;
-  let panX = 0;
-  let panY = 0;
+  // Pointer pan state and the artwork currently on screen. The zoom and pan
+  // numbers themselves live with the zoom engine further down.
   let panning = false;
   let panFromX = 0;
   let panFromY = 0;
@@ -1398,6 +1396,7 @@
     const noArt = $("lbNoArt");
     bar.classList.remove("done");
     curFull = rec.img;
+    resetZoom();
 
     img.onload = null;
     img.onerror = null;
@@ -1417,9 +1416,10 @@
     full.onload = () => {
       bar.classList.add("done");
       setTimeout(() => bar.classList.remove("active", "done"), 2000);
+      // The sharp copy replaces the thumbnail in place: same art, same aspect,
+      // same element, so whatever zoom the reader already dialed in survives.
       img.src = full.src;
-      resetZoom();
-      resetZoom();
+      remeasure();
     };
     full.onerror = () => bar.classList.remove("active");
 
@@ -1506,8 +1506,6 @@
     // version button and the loaded image cannot drift apart.
     rec._curVer = 0;
     loadLbImage(rec);
-    $("lbImgWrap").scrollTop = 0;
-    $("lbStage").scrollTop = 0;
 
     renderVersions(rec);
     renderNearby(idx);
@@ -1586,8 +1584,6 @@
 
     rec._curVer = 0;
     loadLbImage(rec);
-    $("lbImgWrap").scrollTop = 0;
-    $("lbStage").scrollTop = 0;
     renderVersions(rec);
     renderNearby(idx);
     syncLbSave(rec);
@@ -1669,8 +1665,6 @@
     if (!v) return;
     rec._curVer = i;
     loadLbImage(v);
-    $("lbImgWrap").scrollTop = 0;
-    $("lbStage").scrollTop = 0;
     const res = $("lbRes");
     if (res) res.textContent = v.w && v.h ? `${v.w}\u00d7${v.h} px` : "";
     $("lbVersGrid").querySelectorAll(".vbtn").forEach((b) => b.classList.remove("on"));
@@ -1995,6 +1989,7 @@
     const collapsed = $("lbMeta").classList.toggle("collapsed");
     lbInfoBtn.setAttribute("aria-pressed", String(!collapsed));
     lbInfoBtn.textContent = collapsed ? "Details" : "Hide details";
+    remeasure();
   });
 
   const onResize = () => {
@@ -2024,77 +2019,210 @@
 
   const lbImg = $("lbImg");
   const lbImgWrap = $("lbImgWrap");
+  const lbStage = $("lbStage");
+  const lbMeta = $("lbMeta");
+  const lbZoom = $("lbZoom");
 
-  function clampPan() {
-    const box = lbImgWrap.getBoundingClientRect();
-    const mx = ((zoom - 1) * box.width) / 2;
-    const my = ((zoom - 1) * box.height) / 2;
-    panX = Math.max(-mx, Math.min(mx, panX));
-    panY = Math.max(-my, Math.min(my, panY));
+  // Zoom and pan. A wheel tick only moves a target; the frame loop eases the
+  // picture toward it, so the view glides instead of stepping through hard 18%
+  // jumps, and a fast wheel queues intent instead of stacking transforms. The
+  // pan offset is rebuilt from the pixel under the cursor on every step, so the
+  // point you point at stays under the pointer while the scale changes.
+  const ZOOM_MIN = 1;
+  const ZOOM_MAX = 8;
+  const ZOOM_RATE = 0.002; // zoom ratio per pixel of wheel travel
+  const PINCH_RATE = 0.006; // a trackpad pinch reports a far smaller delta
+  const EASE_MS = 55; // time to close 63% of the distance to the target
+  const GESTURE_GAP = 180; // a pause this long means the geometry is re-read
+
+  let zoom = 1; // on screen right now
+  let panX = 0;
+  let panY = 0;
+  let wantZoom = 1; // where the gesture is heading
+  let wantX = 0;
+  let wantY = 0;
+  let box = null; // cached stage and artwork geometry
+  let frame = 0;
+  let lastTick = 0;
+  let lastWheel = 0;
+  let willIdle = 0;
+
+  // The stage, not the artwork's own 100% rectangle, is the viewport: a zoomed
+  // splash may grow into the letterbox and is clipped at the stage edge.
+  function measure() {
+    const stage = lbStage.getBoundingClientRect();
+    const art = lbImgWrap.getBoundingClientRect();
+    box = { stage, art };
+  }
+
+  function limits(z) {
+    if (!box) measure();
+    return {
+      x: Math.max(0, (box.art.width * z - box.stage.width) / 2),
+      y: Math.max(0, (box.art.height * z - box.stage.height) / 2),
+    };
+  }
+
+  function clampX(x, z) {
+    const lim = limits(z);
+    return Math.max(-lim.x, Math.min(lim.x, x));
+  }
+
+  function clampY(y, z) {
+    const lim = limits(z);
+    return Math.max(-lim.y, Math.min(lim.y, y));
   }
 
   function applyZoom() {
-    lbImg.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
-    lbImg.classList.toggle("zoomed", zoom > 1);
+    lbImg.style.transform = `translate3d(${panX.toFixed(2)}px, ${panY.toFixed(2)}px, 0) scale(${zoom.toFixed(4)})`;
+    lbImg.classList.toggle("zoomed", zoom > 1.002);
     lbImg.classList.toggle("dragging", panning);
-    const readout = $("lbZoom");
-    readout.hidden = !lbImg.getAttribute("src");
-    readout.textContent = zoom > 1 ? `${Math.round(zoom * 100)}%  ·  drag to pan` : "100%  ·  scroll to zoom";
+    lbZoom.hidden = !lbImg.getAttribute("src");
+    const text = zoom > 1.002 ? `${Math.round(zoom * 100)}%  ·  drag to pan` : "100%  ·  scroll to zoom";
+    if (lbZoom.textContent !== text) lbZoom.textContent = text;
+  }
+
+  function settle(now) {
+    const dt = lastTick ? Math.min(64, now - lastTick) : 16;
+    lastTick = now;
+    const k = 1 - Math.exp(-dt / EASE_MS);
+    zoom += (wantZoom - zoom) * k;
+    panX += (wantX - panX) * k;
+    panY += (wantY - panY) * k;
+    const done =
+      Math.abs(wantZoom - zoom) < 0.0015 && Math.abs(wantX - panX) < 0.4 && Math.abs(wantY - panY) < 0.4;
+    if (done) {
+      zoom = wantZoom;
+      panX = wantX;
+      panY = wantY;
+      frame = 0;
+      lastTick = 0;
+    }
+    applyZoom();
+    if (done) {
+      clearTimeout(willIdle);
+      willIdle = setTimeout(() => lbImg.classList.remove("animating"), 160);
+    } else {
+      frame = requestAnimationFrame(settle);
+    }
+  }
+
+  function kick() {
+    lbImg.classList.add("animating");
+    clearTimeout(willIdle);
+    if (!frame) {
+      lastTick = 0;
+      frame = requestAnimationFrame(settle);
+    }
   }
 
   function resetZoom() {
+    if (frame) cancelAnimationFrame(frame);
+    frame = 0;
+    lastTick = 0;
     zoom = 1;
     panX = 0;
     panY = 0;
+    wantZoom = 1;
+    wantX = 0;
+    wantY = 0;
     panning = false;
+    clearTimeout(willIdle);
+    lbImg.classList.remove("animating");
     applyZoom();
   }
 
-  function zoomAt(clientX, clientY, factor) {
-    const box = lbImgWrap.getBoundingClientRect();
-    const cx = clientX - (box.left + box.width / 2);
-    const cy = clientY - (box.top + box.height / 2);
-    const next = Math.min(8, Math.max(1, zoom * factor));
-    if (next === zoom) return;
-    panX = cx - (cx - panX) * (next / zoom);
-    panY = cy - (cy - panY) * (next / zoom);
-    zoom = next;
-    if (zoom === 1) {
-      panX = 0;
-      panY = 0;
-    }
-    clampPan();
-    applyZoom();
+  // Nudge the target, never the picture: the next frame carries the view there.
+  function zoomBy(factor, clientX, clientY) {
+    if (!box) measure();
+    const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, wantZoom * factor));
+    if (Math.abs(next - wantZoom) < 1e-4) return;
+    const { stage } = box;
+    const cx = clientX - (stage.left + stage.width / 2);
+    const cy = clientY - (stage.top + stage.height / 2);
+    const scale = next / wantZoom;
+    wantX = cx - (cx - wantX) * scale;
+    wantY = cy - (cy - wantY) * scale;
+    wantZoom = next;
+    wantX = clampX(wantX, next);
+    wantY = clampY(wantY, next);
+    kick();
   }
 
-  lbImgWrap.addEventListener(
+  // The stage changes width when the details panel collapses and the artwork
+  // changes size when a sharper copy lands, so the cached geometry is dropped
+  // whenever either can have moved.
+  function remeasure() {
+    box = null;
+    if (zoom <= ZOOM_MIN) return;
+    measure();
+    panX = clampX(panX, zoom);
+    panY = clampY(panY, zoom);
+    wantX = clampX(wantX, wantZoom);
+    wantY = clampY(wantY, wantZoom);
+    if (!frame) applyZoom();
+  }
+
+  lb.addEventListener(
     "wheel",
     (e) => {
       if (lb.hidden || !lbImg.getAttribute("src")) return;
+      let delta = e.deltaY;
+      if (e.deltaMode === 1) delta *= 40; // lines
+      else if (e.deltaMode === 2) delta *= lbStage.clientHeight; // pages
+
+      // Shift is the way into the details panel: the plain wheel is the zoom.
+      if (e.shiftKey) {
+        const scroll = delta || e.deltaX;
+        if (scroll && lbMeta.scrollHeight > lbMeta.clientHeight) {
+          e.preventDefault();
+          lbMeta.scrollTop += scroll;
+        }
+        return;
+      }
+      if (!delta) return; // a sideways swipe must not zoom either way
       e.preventDefault();
-      zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.18 : 1 / 1.18);
+      const now = performance.now();
+      if (now - lastWheel > GESTURE_GAP) measure();
+      lastWheel = now;
+      const factor = Math.min(2, Math.max(0.5, Math.exp(-delta * (e.ctrlKey ? PINCH_RATE : ZOOM_RATE))));
+      zoomBy(factor, e.clientX, e.clientY);
     },
     { passive: false },
   );
 
+  window.addEventListener("resize", remeasure);
+
   lbImg.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
-    if (zoom <= 1) return;
+    if (wantZoom <= 1.002) return;
     e.preventDefault();
+    measure();
     panning = true;
     panFromX = e.clientX;
     panFromY = e.clientY;
+    // Grabbing the picture cancels a glide still in flight: from here the
+    // pointer is in charge, one pixel of hand to one pixel of art.
+    if (frame) {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      lastTick = 0;
+    }
+    zoom = wantZoom;
+    panX = wantX;
+    panY = wantY;
     lbImg.setPointerCapture(e.pointerId);
     applyZoom();
   });
 
   lbImg.addEventListener("pointermove", (e) => {
     if (!panning) return;
-    panX += e.clientX - panFromX;
-    panY += e.clientY - panFromY;
+    panX = clampX(panX + e.clientX - panFromX, zoom);
+    panY = clampY(panY + e.clientY - panFromY, zoom);
     panFromX = e.clientX;
     panFromY = e.clientY;
-    clampPan();
+    wantX = panX;
+    wantY = panY;
     applyZoom();
   });
 
@@ -2108,8 +2236,8 @@
 
   lbImg.addEventListener("dblclick", (e) => {
     if (lb.hidden || !lbImg.getAttribute("src")) return;
-    if (zoom > 1) resetZoom();
-    else zoomAt(e.clientX, e.clientY, 2.5);
+    if (wantZoom > 1.002) resetZoom();
+    else zoomBy(2.5, e.clientX, e.clientY);
   });
 
   lbImg.addEventListener("auxclick", (e) => {
