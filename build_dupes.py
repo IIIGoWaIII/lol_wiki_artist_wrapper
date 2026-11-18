@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import urllib.error
+import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
@@ -50,6 +50,10 @@ def save_cache(cache: dict) -> None:
 def fetch_sha(url: str, cache: dict) -> tuple[str, str | None]:
     if url in cache:
         return url, cache[url]
+    # A truncated response raises http.client.IncompleteRead, which is not an
+    # OSError, so an explicit exception list would let it escape and kill the
+    # refresh. Catch broadly, like build_data.http_get, and leave the url out of
+    # the cache so the next run retries it.
     for attempt in range(3):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -57,9 +61,10 @@ def fetch_sha(url: str, cache: dict) -> tuple[str, str | None]:
                 digest = hashlib.sha1(r.read()).hexdigest()
             cache[url] = digest
             return url, digest
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except Exception:  # noqa: BLE001
             if attempt == 2:
                 return url, None
+            time.sleep(1.5 * (attempt + 1))
     return url, None
 
 
@@ -80,11 +85,16 @@ def main() -> None:
                 missing.append(url)
         print(f"{game}: {len(recs)} skins, {len(missing)} new thumbs")
         if missing:
+            unhashed = 0
             with ThreadPoolExecutor(max_workers=8) as pool:
-                for i, _ in enumerate(pool.map(lambda u: fetch_sha(u, cache), missing), 1):
+                for i, (_, digest) in enumerate(pool.map(lambda u: fetch_sha(u, cache), missing), 1):
+                    if digest is None:
+                        unhashed += 1
                     if i % 200 == 0:
                         print(f"  hashed {i}/{len(missing)}")
                         save_cache(cache)
+            if unhashed:
+                print(f"  {unhashed}/{len(missing)} thumbs could not be fetched, retrying next run")
 
         groups: dict[str, list[dict]] = {}
         for rec in recs:
