@@ -169,6 +169,21 @@
   // 1200px one the catalogue stores for the lightbox.
   const thumbAt = (url, width) => (url ? url.replace(/\/\d+px-/, `/${width}px-`) : null);
 
+  // A file renamed on the wiki keeps its original bytes readable under the old
+  // name (the CDN still holds them) but loses every thumbnail size, so the
+  // catalogue's `thumb` URL starts 404ing while `img` keeps working. Ask for the
+  // original once rather than leaving a blank tile; the next data refresh picks
+  // up the new file name.
+  function setThumb(img, thumb, full) {
+    img.src = thumb || full;
+    if (!full || img.src === full) return img;
+    img.onerror = () => {
+      img.onerror = null;
+      img.src = full;
+    };
+    return img;
+  }
+
   async function fetchGame(key) {
     if (cache.has(key)) return cache.get(key);
     const p = fetch("data/" + GAMES[key])
@@ -386,7 +401,7 @@
       const item = document.createElement("div");
       item.className = "board-item";
       const img = document.createElement("img");
-      img.src = e.t || e.img;
+      setThumb(img, e.t, e.img);
       img.loading = "lazy";
       img.alt = e.label;
       const label = document.createElement("span");
@@ -802,7 +817,7 @@
       wrap.className = "cimg";
       const img = document.createElement("img");
       img.loading = "lazy";
-      img.src = thumbAt(it.rec.t || it.rec.img, 120);
+      setThumb(img, thumbAt(it.rec.t || it.rec.img, 120), it.rec.img);
       img.alt = it.name;
       wrap.appendChild(img);
       const nm = document.createElement("span");
@@ -908,7 +923,7 @@
     if (src) {
       const img = document.createElement("img");
       img.loading = "lazy";
-      img.src = src;
+      setThumb(img, src, it.rec.img);
       img.alt = it.name;
       label.insertBefore(img, name);
     }
@@ -1291,7 +1306,7 @@
     if (rec.img) {
       const img = document.createElement("img");
       img.loading = "lazy";
-      img.src = thumbAt(rec.t || rec.img, 420);
+      setThumb(img, thumbAt(rec.t || rec.img, 420), rec.img);
       img.alt = `${rec._label} — ${rec.ch} splash art`;
       imgWrap.appendChild(img);
     } else {
@@ -1421,7 +1436,14 @@
       img.src = full.src;
       remeasure();
     };
-    full.onerror = () => bar.classList.remove("active");
+    // The 1200px thumb 404s on a renamed file while the original still loads,
+    // so only the original's failure means the art is really gone.
+    full.onerror = () => {
+      bar.classList.remove("active");
+      img.hidden = true;
+      img.removeAttribute("src");
+      noArt.hidden = false;
+    };
 
     img.src = thumbAt(rec.t || rec.img, 1200);
     bar.classList.add("active");
@@ -1612,7 +1634,7 @@
       b.className = "near" + (i === idx ? " on" : "");
       b.title = rec._label;
       const img = document.createElement("img");
-      img.src = thumbAt(rec.t || rec.img, 300);
+      setThumb(img, thumbAt(rec.t || rec.img, 300), rec.img);
       img.alt = rec._label;
       b.appendChild(img);
       b.addEventListener("click", () => openLightbox(i));
@@ -1643,7 +1665,7 @@
       if (src) {
         const im = document.createElement("img");
         im.loading = "lazy";
-        im.src = src;
+        setThumb(im, src, v.img);
         im.alt = v.l;
         b.append(im);
       }
