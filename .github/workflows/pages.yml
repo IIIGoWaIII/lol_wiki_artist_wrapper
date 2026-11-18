@@ -3,6 +3,13 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  # The skin refresh commits with GITHUB_TOKEN, and GitHub does not start
+  # workflows for those pushes, so deploy when that workflow finishes instead.
+  # A workflow_run checkout is the default branch, which is the commit the
+  # refresh just pushed.
+  workflow_run:
+    workflows: ["Refresh wiki skin data"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -16,8 +23,12 @@ concurrency:
 
 jobs:
   build:
+    # A failed refresh left main untouched, so there is nothing new to publish.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
+      # workflow_run checks out the default branch tip, which is the commit the
+      # refresh pushed.
       - uses: actions/checkout@v4
       - name: Assemble site
         run: mkdir -p _site && cp -r web/* _site/ && cp -r data _site/
