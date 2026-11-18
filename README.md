@@ -1,169 +1,189 @@
 # Splash Reference
 
-Local reference-gallery wrapper for the [League of Legends Wiki](https://wiki.leagueoflegends.com/en-us/) splash arts, built for quickly pulling full-HD splash references into [PureRef](https://www.pureref.com/).
+A local gallery of League of Legends splash art, Wild Rift ports and Runeterra card art, plus a separate board of film stills and paintings for general visual reference. Filter a few thousand images down to the ones you want, open the full-resolution original, then send the set to PureRef.
 
-Covers three games, one tab each: **League of Legends**, **Wild Rift** and **Legends of Runeterra**, plus a fourth **Reference** tab with a general visual reference board for non-League study. TFT is excluded because it reuses League artwork, and 2XKO has no cosmetics on the wiki yet.
+The hosted copy lives at https://IIIGoWaIII.github.io/lol_wiki_artist_wrapper/ and deploys from `main`.
 
-## Features
-
-- Browse each game's splash arts as a filterable gallery.
-- **Reference** tab: a searchable board of ~32k film stills and paintings, styled like [imaginemore.art](https://imaginemore.art): justified rows, captions on hover, one search box, and filters for director, cinematographer, production designer, genre, country, artist, movement and decade. Stills are grouped into one contact sheet per film (year, director, still count) and ordered chronologically — newest or oldest film, with undated films last — not by how many stills a film happens to have.
-- Multi-select filter panels with inline search and **Select all / Clear**:
-  - **Champions** — grid of champion avatars (alphabetical).
-  - **Themes** — grid of theme-representative splashes.
-  - **Artists** — splash artists.
-  - **Vibes, Kind, Species, Gender, Region, Class** — see [Tags](#tags) below. Panels combine as AND, values inside a panel as OR, so *Kind: Monster* + *Vibes: Cute* finds the cute monsters.
-- **Shared splashes collapse.** Some skins ship the exact same painting (Cafe Cuties, True Damage, event art). Those become one tile marked "Shared by N skins", with every skin listed in the viewer; different crops of the same painting stay separate because they are different artwork.
-- Sort by release date or champion, newest or oldest first.
-- **Board**: bookmark any tile (or press `S` in the viewer) and it collects into a right-hand panel, persisted in `localStorage`. Copy all saved links in one go for a PureRef import or a downloader.
-- **Zoom and pan** in the lightbox: scroll to zoom up to 800% about the cursor, drag to pan, double-click for fit/1:1, with a live percentage. Metadata is grouped (champion / artwork / dates) and a nearby strip steps through neighbours.
-- **Tile density** S/M/L for both the game grids and the reference rows, remembered between visits.
-- High-definition splashes (up to 6000x3500+) with resolution shown on every card and in the detail view.
-- **Other versions** listed in the side panel for reworked/older splashes (e.g. pre-rework `_old`/`_Unused` art) — click one to load it into the main view.
-- Shareable links: `?game=wr&champ=Jinx&skin=Project` opens that skin directly, `?game=ref&r=film:Discrete_Charm_01.jpg` opens a frame on the reference board, and filters travel in the URL too (`?game=lol&f=vibe:Cute|kind:Monster&q=star`). The lightbox also keeps the URL in sync as you browse.
-- Keyboard: Tab to a card, Enter or Space opens it, arrow keys step through the gallery, Esc closes; `/` focuses search, `b` toggles the board, `s` saves, `i` toggles details.
-- Each game is cropped to its own native artwork ratio, so Wild Rift and Runeterra card art are not cut to League's 1215x717.
-
-## Run
-
-Public copy hosted on GitHub Pages (auto-deployed from `main`):
-
-- https://IIIGoWaIII.github.io/lol_wiki_artist_wrapper/
-
-Run locally:
+## Run it
 
 ```powershell
-python server.py            # http://localhost:8000
+python server.py
 python server.py --port 9000
 ```
 
-The server also binds 0.0.0.0, so LAN devices can use `http://<your-ip>:8000`, and a Tailscale node at `http://<tailscale-ip>:8000` when present.
+Windows users can double-click `start_server.bat`. The server listens on `0.0.0.0` and prints its local, LAN and Tailscale addresses on startup. JSON is gzipped and ETagged, and `/data/` serves only the catalogue files, so build inputs such as `artwork_overrides.json` stay off the web.
 
-## Regenerate data
+The frontend is plain HTML, CSS and JavaScript in `web/` with no build step.
 
-Each catalogue is generated from the wiki's Lua tables, the image index (`allimages`), each file's full revision history, and the champion lore pages behind the [tags](#tags). Distinct repaints are detected by perceptual hash (dHash): small iterations of the same artwork are collapsed, so the **other versions** panel shows one copy per real repaint, oldest first, each upgraded to its best available resolution.
+## The libraries
 
-Requires Python with Pillow:
+| Library | Contents |
+| --- | --- |
+| League of Legends | About 2,150 splashes across 173 champions, with reworked and unused art kept as alternate versions. |
+| Wild Rift | About 1,090 cosmetics across 143 champions. Most are ports, some are redrawn, and for a few the Wild Rift file is the widest copy on the wiki. |
+| Legends of Runeterra | 272 card arts across 122 champions. |
+| Reference | About 29,700 film stills from 3,716 films and 3,700 paintings. |
+
+Counts come from the last data refresh and move as the wiki changes. The browse header shows the real number once a library loads.
+
+TFT sits out because its sets reuse League artwork. Everything else the wiki lists is kept, including entries with no uploaded image, which show a placeholder instead of disappearing.
+
+## Using it
+
+The home screen is a library chooser. Pick one and the browse view loads its catalogue, sorted newest first.
+
+The filter drawer is built from what each catalogue declares, so its panels change with the library. Game libraries get Champions, Themes and Artists, then Vibes, Kind, Species, Gender, Region, Class and five scene groups from the vision pass. The reference board swaps those for Directors, Cinematographers, Production designers, Genres, Countries, Artists, Movements, Decades and the same scene groups.
+
+Every panel has its own search box. Commas work, so `briar, lux` lists both champions. Select all and Clear act on the whole panel, and Only selected hides everything except your picks. Panels combine as AND and values within a panel as OR, so Kind: Monster with Vibes: Cute finds the cute monsters. Game libraries also get a release year filter at the bottom of the drawer.
+
+The search box covers every printed field: champion, skin, theme, artist, director, place, mood and the generated caption. Every word has to match, so more words mean fewer results.
+
+The champion strip along the top of a game library is quicker than opening the panel when you already know the champion you want.
+
+Sort by newest or oldest release, or A to Z and Z to A by name. On the reference board, release means the film's year, and undated films stay last in both directions.
+
+Some skins ship the same file. The SKT T1 and DRX team skins are single paintings shared by five entries each, so the gallery shows one tile marked "Shared by N skins" and lists every skin in the viewer. Only byte-identical files collapse. Different crops of one painting stay separate.
+
+The Board is a save list. Click the bookmark on a tile or press `s` in the viewer, and the entry appears in the right-hand panel. It survives reloads in `localStorage`. Copy links dumps every saved image URL on its own line, ready for a PureRef import or a downloader.
+
+The viewer shows a 1200px copy first and swaps in the original when it loads. Scroll to zoom up to 800% around the cursor, drag to pan, double-click to switch between fit and 1:1. The readout shows the current percentage, and the Details button collapses the metadata panel for more room.
+
+Below the metadata, Other versions lists real repaints of the same skin, oldest first, each upgraded to the best resolution available. Click one to load it into the main view. Nearby steps through the current result set. Middle-click opens the original in a new tab.
+
+Reference stills sit in justified rows, one contact sheet per film, with a header showing year, director and still count. Hover a tile for its film and caption. Tile size S, M or L also rescales these rows, and the choice is remembered between visits.
+
+| Key | Action |
+| --- | --- |
+| `/` | Focus search |
+| `b` | Toggle the board |
+| `s` | Save the open image to the board |
+| `i` | Show or hide viewer details |
+| `Left` / `Right` | Previous or next image in the viewer |
+| `Esc` | Close the viewer, drawer or board |
+| `Tab` | Move through controls; the viewer traps focus |
+
+Links carry state. `?game=wr&champ=Jinx&skin=Project` opens a skin, `?game=ref&r=film:Bullet_Train_01.jpg` opens a still, and filters travel as `?game=lol&f=vibe:Cute|kind:Monster&q=star&y=2021`. The viewer rewrites the URL as you step, so the address bar is always shareable.
+
+## Building the skin catalogues
+
+One wiki hosts all three games. `build_data.py` fetches each game's Lua module, parses it, finds art through the `allimages` index, pulls each canonical file's revision history, and writes one JSON catalogue per game.
+
+| Game | Source modules | Output |
+| --- | --- | --- |
+| League of Legends | `Module:SkinData/data` | `data/skins.json` |
+| Wild Rift | `Module:SkinDataWR/data` | `data/skins-wr.json` |
+| Legends of Runeterra | `Module:LoRCosmetics/skins` and `Module:LoRData/data` | `data/skins-lor.json` |
+
+Requires Python and Pillow.
 
 ```powershell
 python build_data.py              # all three games
 python build_data.py wr           # just Wild Rift (also: lol, lor)
 ```
 
-Computed dHashes are kept in `.cache/hashes.json`, keyed by image URL, so a rebuild only hashes art it has not seen. Delete the file to force a full recompute. The CI workflow caches the same directory between daily runs. A catalogue's `meta.gen` date only moves when its content changes, so the daily job commits only when the wiki actually changed.
+The build uses dHash to collapse small iterations of the same painting. Distinct repaints survive, and each is upgraded to its highest-resolution copy. Every catalogue carries its native aspect ratio, so Wild Rift and Runeterra art is not cropped to League's 1215x717.
 
-Outputs one file per game, each with its own `meta.aspect` used by the frontend:
+dHash values are cached in `.cache/hashes.json`, keyed by image URL, so a rebuild only hashes art it has not seen. Delete the file to force a full recompute. A catalogue's `meta.gen` date only moves when its content changes, which keeps the daily CI commit quiet when the wiki has not moved.
 
-| Game | Wiki source | Output |
-| --- | --- | --- |
-| League of Legends | `Module:SkinData/data` | `data/skins.json` |
-| Wild Rift | `Module:SkinDataWR/data` | `data/skins-wr.json` |
-| Legends of Runeterra | `Module:LoRCosmetics/skins` + `Module:LoRData/data` | `data/skins-lor.json` |
+`python build_dupes.py` writes `data/dupes.json`, the map of byte-identical splashes. It downloads each canonical thumb once, caches its sha1 in `.cache/thumb-sha1.json`, and groups files that hash the same. Groups larger than `MAX_GROUP` are the wiki's fallback image for retired files, so they are ignored.
 
-### Reference board
+Optional per-skin overrides live in `data/artwork_overrides.json`, keyed by canonical file base such as `"Xin_Zhao_OriginalSkin"`. The value is either a list of dates to keep or `{"keep": [...]}`, which is how you force a revision when the hash matcher picks the wrong one.
 
-`python build_reference.py` builds `data/reference.json` from two open libraries:
+### Automatic refreshes
+
+Three GitHub Actions workflows keep the site current:
+
+- `update-data.yml` runs daily at 06:00 UTC, rebuilds the three skin catalogues and the shared-splash map, and commits only if `data/` changed.
+- `update-reference.yml` runs weekly on Monday at 07:00 UTC, recrawls the reference libraries with `--refresh`, and commits `reference.json` if it changed.
+- `pages.yml` assembles `web/` and `data/` into the Pages site on every push to `main`.
+
+## Reference board
+
+`python build_reference.py` builds `data/reference.json` from two open libraries.
 
 | Library | Source | What it gives |
 | --- | --- | --- |
-| Cinematic | [film-grab.com](https://film-grab.com) WordPress REST API | film stills with director, director of photography, production designer, genre, country, year and aspect ratio |
-| Classic Art | [imaginemore.art](https://imaginemore.art) `/api/assets` | paintings with artist, year and movement |
+| Cinematic | [film-grab.com](https://film-grab.com) WordPress REST API | Film stills with director, director of photography, production designer, genre, country, year and aspect ratio. |
+| Classic Art | [imaginemore.art](https://imaginemore.art) `/api/assets` | Paintings with artist, year and movement. |
 
-Imagine More's Cinematic, Game Art, Animated and Music libraries are paywalled past a 150-item preview, and their anonymous Classic Art window stops at roughly 3,500 unique images, so that is the ceiling for the art half. film-grab lists about 2,400 films with still galleries; `--stills` decides how many frames are kept per film (an even spread through the film, default 8). Every API response is cached in `.cache/reference/`, so a run that trips film-grab's rate limit resumes instead of starting over; `--refresh` ignores the cache.
+film-grab lists around 3,700 films with full still galleries. Keeping every frame would be half a million files, so the build takes an even spread through each film, 8 by default.
+
+Imagine More's Cinematic, Game Art, Animated and Music libraries stop at a 150-item preview without a subscription. Classic Art works without an account up to roughly 3,500 images, which is why the art half is the smaller one.
 
 ```powershell
 python build_reference.py                 # both libraries
 python build_reference.py --only film     # just the cinematic half
 python build_reference.py --stills 12     # more frames per film
-python build_dupes.py                     # refresh shared-splash map
+python build_reference.py --films 800     # cap the crawl
+python build_reference.py --refresh       # ignore the response cache
 ```
 
-### Scene tags
+API responses are cached in `.cache/reference/`, so a run that hits a rate limit resumes instead of starting over.
 
-Search is substring matching over metadata, so `train station` only works if the
-image is actually tagged as one. `tag_images.py` runs a vision pass over every
-image and writes closed facets plus a one-line caption into `data/tags.json`:
+## Tags
 
-| Facet | Values |
-| --- | --- |
-| `place` | train station, kitchen, throne room, battlefield, procession, … |
-| `setting` | interior, exterior, both |
-| `light` | daylight, dusk, night, neon, candlelit, warm lamp, low key, … |
-| `weather` | rain, snow, fog, smoke, haze, … |
-| `people` | none, single, few, crowd |
-| `shot` | close-up, portrait, full body, wide, landscape, detail |
-| `mood` | calm, tense, melancholic, ominous, awe, … |
+The wiki does not tag splash art by subject. A file is categorised by champion, skin line, release season and copyright, so there is no cute, female or monster category to filter on. The gallery builds those groups itself from champion lore and a curated skin-line map, and stores them per skin in `tags`.
 
-Facets are a closed vocabulary on purpose: free-form keywords fragment into
-"railway station" / "station platform" / "train platform" and make filtering
-worse. The sidebar turns them into five panels — Scenes, Setting, Light &
-weather, Framing, Mood — and the search box indexes the captions too.
+| Group | Where it comes from | Values |
+| --- | --- | --- |
+| `kind` | Coarse grouping of `species` | Human, Humanoid, Yordle, Beast, Monster, Spirit, Construct |
+| `species` | `species` field on the champion lore page, `Universe:<Champion>` | Human, Yordle, Voidborn, Darkin, Demon, Aspect Host, ... |
+| `gender` | The lore page's `pronoun` field | Male, Female, Other |
+| `region` | The lore page's `region` field | Ionia, Noxus, Zaun, Demacia, ... |
+| `class` | `Module:ChampionData/data` | Marksman, Mage, Fighter, Tank, Assassin, Support |
+| `vibe` | Curated skin-line map, `VIBES` in `wiki_tags.py` | Cute, Anime, Dark, Sci-Fi, Fantasy, Oriental, Western, Summer, Holiday, Modern, Music, Esports |
+
+Species, gender, region and class are champion-level, so every skin of a champion inherits them. The lore pages come from `{{Champion bio}}` templates, fetched in batches of 50 titles through the wiki API.
+
+Vibes are editorial, not wiki data. `VIBES` maps each skin line to a look, with `CHAMP_VIBES` as the fallback for Originals and art that predates skin lines. Any skin line missing from `VIBES` is printed during the build, so the gap shows up instead of the skin quietly losing its tags.
+
+Scene facets come from a vision pass over the images themselves. `tag_images.py` sends batches to the local `opencode` CLI and asks for a closed vocabulary of `place`, `setting`, `light`, `weather`, `people`, `shot` and `mood`, plus a one-line caption. The closed list matters: free-form keywords split into "railway station", "station platform" and "train platform", and the filters stop agreeing with each other.
+
+`tagmerge.py` flattens the raw facets into the five sidebar groups. Place becomes Scenes, light and weather become Light & weather, people and shot become Framing, and mood stays Mood. The raw facets and caption stay on each record for the detail view, and the caption is searchable.
 
 ```powershell
 python tag_images.py reference            # every reference image
 python tag_images.py skins --game lol     # one game's splashes
 python tag_images.py reference --limit 40 --dry   # pilot
-python tag_images.py reference --aggregate-only   # rebuild tags.json from cache
+python tag_images.py all --aggregate-only  # rebuild tags.json from cache
 python tagmerge.py                        # merge tags.json into the catalogues
 ```
 
-The vision engine is the local `opencode` CLI, not an API key: it reads the
-attached images through the same OpenCode subscription the coding session uses.
-Each image is cached in `.cache/tags/<key>.json`, so a run resumes where it
-stopped. `run_all.sh` runs the reference pass, the game passes, the aggregate and
-the merge in one go. The weekly catalogue refresh only re-applies `tags.json` —
-CI has no agent to run the vision pass, so run `tag_images.py` locally after a
-large catalogue change.
+Each image's tags are cached in `.cache/tags/<key>.json`, so an interrupted run resumes. `run_all.sh` runs the reference pass, the skins pass, the aggregate and the merge in one job. The catalogue builds call `tagmerge` too, so a rebuild re-applies `tags.json` without another vision pass.
 
+CI has no agent, so the daily and weekly refreshes only re-apply the tags that are already committed. After a large catalogue change, run `tag_images.py` locally and commit the updated `tags.json`.
 
-### Wild Rift and League artwork overlap
+## Why Wild Rift keeps its own copies
 
-Wild Rift ports many League skins, so 667 of the 1073 WR cosmetics share a champion and skin name with a League skin. All of them are kept, for two reasons measured against the wiki:
+669 of the 1,091 Wild Rift entries share a champion and skin name with a League skin. All of them stay.
 
-- The files are never identical. No WR/LoL pair shares a sha1, so each port is its own upload and usually a different crop or colour grade. A WR splash is a separate piece of work rather than a copy of the League one.
-- For 18 skins the WR file is the widest image that exists. Nocturne Original is 10000px in Wild Rift against 6000px in League, Riven Valiant Sword 8000 against 4000, Jhin PROJECT 7000 against a 1215px League file. Dropping those loses the only high-resolution copy.
+The WR file is a separate upload with its own crop and colour grade, and for 41 pairs it is the wider copy. Nocturne Original is 10,000px in Wild Rift against 6,000 in League. Talon Dragonblade is 10,000 against 4,800. Jhin PROJECT is 7,000 against a 1,215px League file. Dropping the ports would lose the best version of those paintings.
 
-A previous build dropped them by comparing images, using a blurred-correlation threshold of 0.70. Measured over the pairs, the same-painting scores reached down to 0.71 and the different-painting scores reached up to 0.70, so the bands overlapped with no clean cut in between and the threshold was a judgment call. It also hid roughly 100 WR splashes that exist nowhere else, among them the 15 champions whose base artwork Wild Rift re-shot for itself: Jax, Leona, Mel, Nautilus, Nidalee, Norra, Rek'Sai, Shyvana, Soraka, Sylas, Teemo, Thresh, Viego, Xin Zhao and Yunara.
+An earlier build did drop them by comparing images with a blurred-correlation threshold of 0.70. Same-painting pairs scored as low as 0.71 and different-painting pairs as high as 0.70, so the bands overlapped and there was no clean cut. The threshold was a guess, and it removed WR art the League catalogue does not contain.
 
-Optional per-skin override in `data/artwork_overrides.json` (keyed by canonical file base, e.g. `"Xin_Zhao_OriginalSkin"`) forces which revisions to keep by date, either a plain list or `{"keep": [...]}`.
+## Repository layout
 
-## Tags
+| Path | Purpose |
+| --- | --- |
+| `build_data.py` | Fetch, parse and verify the three skin catalogues. |
+| `build_dupes.py` | Find byte-identical splashes. |
+| `build_reference.py` | Crawl film-grab and Imagine More into `reference.json`. |
+| `wiki_tags.py` | Champion lore and skin-line vibes. |
+| `tag_images.py` | Vision pass over reference images and splashes. |
+| `tagmerge.py` | Merge the vision tags into the catalogues. |
+| `server.py` | Local static server with gzip and ETag. |
+| `run_all.sh` | Full tagging run: reference, skins, aggregate, merge. |
+| `web/` | `index.html`, `style.css`, `app.js`. |
+| `data/` | Generated catalogues, the reference board and the merged tags. |
+| `tools/` | One-off wiki analysis scripts, not part of the build. |
+| `.github/` | Daily skin refresh, weekly reference refresh, Pages deploy. |
 
-The wiki does not tag splash art by subject: a splash file is only categorised by champion, skin line, release season and copyright, and there is no "cute", "female" or "monster" category anywhere on it (`Category:Monsters` is jungle camps). The gallery therefore builds its own filter groups, stored per skin in `tags`:
+## Notes on wiki files
 
-| Group | Where it comes from | Values |
-| --- | --- | --- |
-| `kind` | coarse grouping of `species` | Human, Humanoid, Yordle, Beast, Monster, Spirit, Construct |
-| `species` | `species` field of the champion's lore page, `Universe:<Champion>` (`{{Champion bio}}`) | Human, Yordle, Voidborn, Darkin, Demon, Aspect Host, ... |
-| `gender` | the lore page's `pronoun` field | Male, Female, Other |
-| `region` | the lore page's `region` field | Ionia, Noxus, Zaun, Demacia, ... |
-| `class` | `Module:ChampionData/data` | Marksman, Mage, Fighter, Tank, Assassin, Support |
-| `vibe` | curated map of skin lines (`VIBES` in `wiki_tags.py`) | Cute, Anime, Dark, Sci-Fi, Fantasy, Oriental, Western, Summer, Holiday, Modern, Music, Esports |
-
-Species, gender, region and class are champion-level, so every skin of a champion inherits them. Vibes are skin-line-level, with a small per-champion fallback (`CHAMP_VIBES`) for Originals and pre-skin-line art. Skins are never silently left out: the build prints any skin line missing from `VIBES`, which is the list to extend when the wiki adds a line.
-
-The bio pages are fetched in batches of 50 titles through the API (four requests for League), and the lore overrides live in `OVERRIDES` next to the tables.
-
-## Layout
-
-```
-build_data.py   fetch + parse + verify -> data/skins{,-wr,-lor}.json
-build_reference.py  crawl film-grab + Imagine More -> data/reference.json
-build_dupes.py  byte-identical splashes -> data/dupes.json
-wiki_tags.py    champion lore + skin-line vibes -> the filter tags
-server.py       static server (local browsing), gzip + ETag
-web/            index.html, style.css, app.js (no build step, vanilla JS)
-data/           generated catalogues, one JSON per game, plus the reference board
-tools/          one-off wiki analysis scripts (not part of the build)
-.github/        CI: daily skin refresh, weekly reference refresh, Pages deploy
-```
-
-## Notes
-
-- League splash file resolution: `Champion_<Skin>Skin.jpg` with spaces/colons/slashes stripped but other punctuation kept (e.g. `Kog'Maw Bee'MawSkin.jpg`, `Gragas Gragas,Esq.Skin.jpg`). The `_HD` variant (e.g. `Tahm_Kench_OriginalSkin_HD.jpg`) is preferred when the wiki has one. Newer HD uploads are `.png` (`Briar_OriginalSkin_HD.png`), so both extensions are probed.
-- Wild Rift uses the same scheme with a `_WR` suffix, but uploaded its first champions as `.png` and later switched to `.jpg`, so both extensions are probed.
-- Runeterra files are named by card code (`01DE012_Rugged-HD-full.jpg`). A card's files also cover its star levels (`T1`-`T8`) and its other cosmetics, so only the `-alt` family is treated as alternate art of the same cosmetic.
-- Variant/prestige skins reuse their base skin's art.
-- Images are hot-linked from the wiki; HD originals are up to 6000px+ wide. Grid and sidebar thumbnails request the 420px variant, the lightbox requests 1200px.
-- The reference board hot-links its stills and paintings the same way, from `film-grab.com` and `inspiration.imaginemore.art`. The film stills are 1920px JPEGs at roughly 85 KB, so the lightbox loads the grid image rather than a second copy.
-- Skins with no artwork on the wiki (mostly unreleased `Upcoming` entries) are kept in the catalogue but show a placeholder. League currently has none; Wild Rift has a handful. Each catalogue's `meta.missingImage` holds the current count.
+- League splashes are named `Champion_<Skin>Skin.jpg` with spaces, colons and slashes stripped but other punctuation kept, so Kog'Maw Bee'Maw is `Kog'Maw_Bee'MawSkin.jpg` and Gragas, Esq. is `Gragas_Gragas,Esq.Skin.jpg`. The `_HD` variant is preferred when it exists. Newer HD uploads are `.png`, so both extensions are probed.
+- Wild Rift uses the same scheme with a `_WR` suffix. Early champions were uploaded as `.png` and later ones as `.jpg`, so both are probed.
+- Runeterra files are named by card code, for example `01DE012_Rugged-HD-full.jpg`. A card's files also cover its star levels `T1` through `T8` and its other cosmetics, so only the `-alt` family counts as alternate art of the same cosmetic.
+- Variant and prestige skins reuse the base skin's art.
+- Images are hot-linked, never mirrored. Splash thumbnails in the grid and panels request the 420px variant, the viewer starts at 1200px and swaps in the original, and HD originals reach 10,000px wide. The galleries need network access.
+- Reference stills are hot-linked from film-grab and paintings from `inspiration.imaginemore.art`, so the lightbox uses the full-size image there instead of a second copy.
+- Skins with no artwork on the wiki stay in the catalogue with a placeholder. League currently has none and Wild Rift has one. `meta.missingImage` in each catalogue holds the count.
